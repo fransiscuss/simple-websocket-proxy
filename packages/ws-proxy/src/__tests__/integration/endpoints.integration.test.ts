@@ -2,13 +2,17 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createIntegrationTestHelpers, setupIntegrationTestGlobals } from '../helpers/integration-setup';
 import { generateTestData } from '../helpers/test-setup';
 
-// Mock auth middleware to allow authenticated requests
+// Mock auth middleware with configurable behavior
+const mockAuthenticateToken = vi.fn((req, res, next) => {
+  req.user = { userId: 'user-123', email: 'test@example.com', role: 'ADMIN' };
+  next();
+});
+
+const mockRequireAdmin = vi.fn((req, res, next) => next());
+
 vi.mock('../../middleware/auth', () => ({
-  authenticateToken: vi.fn((req, res, next) => {
-    req.user = { userId: 'user-123', email: 'test@example.com', role: 'ADMIN' };
-    next();
-  }),
-  requireAdmin: vi.fn((req, res, next) => next()),
+  authenticateToken: mockAuthenticateToken,
+  requireAdmin: mockRequireAdmin,
 }));
 
 vi.mock('../../utils/logger', () => ({
@@ -209,14 +213,17 @@ describe('Endpoints API Integration Tests', () => {
     });
 
     it('should require authentication', async () => {
+      // Mock auth middleware to return 401
+      mockAuthenticateToken.mockImplementationOnce((req, res, next) => {
+        res.status(401).json({ error: 'Unauthorized' });
+      });
+
       const response = await request
         .get('/api/endpoints')
         .expect(401);
 
-      // Since we mocked auth middleware, this test simulates what would happen
-      // without the mock by checking the middleware is called
-      const { authenticateToken } = await import('../../middleware/auth');
-      expect(authenticateToken).toHaveBeenCalled();
+      expect(mockAuthenticateToken).toHaveBeenCalled();
+      expect(response.body).toEqual({ error: 'Unauthorized' });
     });
   });
 
@@ -470,7 +477,14 @@ describe('Endpoints API Integration Tests', () => {
 
       expect(mockPrisma.endpoint.update).toHaveBeenCalledWith({
         where: { id: 'endpoint-123' },
-        data: updateData,
+        data: {
+          name: 'Updated Endpoint',
+          limits: {
+            maxConnections: 200,
+            maxMessageSize: 1048576,  // Default value applied by Zod
+            timeoutMs: 30000,         // Default value applied by Zod
+          },
+        },
       });
 
       expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({

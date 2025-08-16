@@ -11,9 +11,20 @@ import { generateTestJWT, generateTestData } from './test-setup';
 export const createTestApp = () => {
   const app = express();
   
-  // Setup middleware
-  app.use(express.json());
+  // Setup middleware with error handling for malformed JSON
+  app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
+  
+  // Handle JSON parsing errors
+  app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (error instanceof SyntaxError && 'body' in error) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Invalid JSON syntax'
+      });
+    }
+    next(error);
+  });
   
   // Add routes
   app.use('/auth', authRouter);
@@ -24,12 +35,16 @@ export const createTestApp = () => {
   // Health endpoint
   app.get('/healthz', async (req, res) => {
     try {
-      // Mock database health check for integration tests
+      // Import database service to check health
+      const { getDatabaseService } = await import('../../services/database');
+      const dbService = getDatabaseService();
+      const dbHealth = await dbService.healthCheck();
+      
       const healthStatus = {
-        status: 'healthy',
+        status: dbHealth.connected ? 'healthy' : 'unhealthy',
         timestamp: new Date().toISOString(),
-        uptime: 1000,
-        database: { connected: true, responseTimeMs: 5 },
+        uptime: process.uptime() * 1000,
+        database: dbHealth,
         activeConnections: 0,
         memory: {
           used: process.memoryUsage().heapUsed,
@@ -37,7 +52,9 @@ export const createTestApp = () => {
           usage: process.memoryUsage().heapUsed / process.memoryUsage().heapTotal
         }
       };
-      res.status(200).json(healthStatus);
+      
+      const statusCode = dbHealth.connected ? 200 : 503;
+      res.status(statusCode).json(healthStatus);
     } catch (error) {
       res.status(503).json({
         status: 'unhealthy',

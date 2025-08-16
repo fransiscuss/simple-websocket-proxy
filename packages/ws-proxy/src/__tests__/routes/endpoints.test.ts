@@ -5,9 +5,10 @@ import { createMockPrismaClient } from '../mocks/prisma';
 import { createAuthenticatedRequest, createMockResponse, createMockNext } from '../mocks/express';
 import { generateTestData } from '../helpers/test-setup';
 
-// Mock express Router
-vi.mock('express', () => ({
-  Router: vi.fn(),
+// Mock prisma first
+const mockPrisma = createMockPrismaClient();
+vi.mock('../../services/database', () => ({
+  prisma: mockPrisma,
 }));
 
 // Mock dependencies
@@ -26,31 +27,31 @@ vi.mock('../../middleware/auth', () => ({
   requireAdmin: vi.fn((req, res, next) => next()),
 }));
 
-// Mock prisma
-const mockPrisma = createMockPrismaClient();
-vi.mock('../../services/database', () => ({
-  prisma: mockPrisma,
-}));
+// Global setup for router mock
+const routes = [];
+const middlewares = [];
 
-const mockRouter = vi.mocked(Router);
+const mockRouterInstance = {
+  post: vi.fn((path, handler) => routes.push({ method: 'POST', path, handler })),
+  get: vi.fn((path, handler) => routes.push({ method: 'GET', path, handler })),
+  put: vi.fn((path, handler) => routes.push({ method: 'PUT', path, handler })),
+  delete: vi.fn((path, handler) => routes.push({ method: 'DELETE', path, handler })),
+  patch: vi.fn((path, handler) => routes.push({ method: 'PATCH', path, handler })),
+  use: vi.fn((middleware) => middlewares.push(middleware)),
+};
+
+// Mock express Router to return our mock instance
+vi.mock('express', () => ({
+  Router: vi.fn(() => mockRouterInstance),
+}));
 
 // Helper to simulate route execution
 const executeRoute = async (method: string, path: string, reqOverrides: any = {}) => {
-  const routes = [];
-  const middlewares = [];
+  // Clear previous routes
+  routes.length = 0;
+  middlewares.length = 0;
   
-  const mockRouter = {
-    post: vi.fn((path, handler) => routes.push({ method: 'POST', path, handler })),
-    get: vi.fn((path, handler) => routes.push({ method: 'GET', path, handler })),
-    put: vi.fn((path, handler) => routes.push({ method: 'PUT', path, handler })),
-    delete: vi.fn((path, handler) => routes.push({ method: 'DELETE', path, handler })),
-    patch: vi.fn((path, handler) => routes.push({ method: 'PATCH', path, handler })),
-    use: vi.fn((middleware) => middlewares.push(middleware)),
-  };
-
-  mockRouter.mockReturnValue(mockRouter as any);
-  
-  // Re-import to get the router with mocked Router
+  // Re-import to get the router with mocked Router  
   const { endpointsRouter: testRouter } = await import('../../routes/endpoints');
   
   // Find the matching route

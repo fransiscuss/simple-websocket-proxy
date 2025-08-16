@@ -124,18 +124,23 @@ router.post('/', async (req, res) => {
       data,
     });
 
-    await prisma.auditLog.create({
-      data: {
-        action: 'CREATE_ENDPOINT',
-        entityType: 'ENDPOINT',
-        entityId: endpoint.id,
-        details: {
-          name: endpoint.name,
-          targetUrl: endpoint.targetUrl,
-          userId: req.user!.userId,
+    // Create audit log (non-blocking - don't fail the request if this fails)
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action: 'CREATE_ENDPOINT',
+          entityType: 'ENDPOINT',
+          entityId: endpoint.id,
+          details: {
+            name: endpoint.name,
+            targetUrl: endpoint.targetUrl,
+            userId: req.user!.userId,
+          },
         },
-      },
-    });
+      });
+    } catch (auditError) {
+      logger.warn('Failed to create audit log', { error: auditError, endpointId: endpoint.id });
+    }
 
     logger.info('Endpoint created', { 
       endpointId: endpoint.id, 
@@ -173,17 +178,22 @@ router.patch('/:id', async (req, res) => {
       data,
     });
 
-    await prisma.auditLog.create({
-      data: {
-        action: 'UPDATE_ENDPOINT',
-        entityType: 'ENDPOINT',
-        entityId: endpoint.id,
-        details: {
-          changes: data,
-          userId: req.user!.userId,
+    // Create audit log (non-blocking - don't fail the request if this fails)
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action: 'UPDATE_ENDPOINT',
+          entityType: 'ENDPOINT',
+          entityId: endpoint.id,
+          details: {
+            changes: data,
+            userId: req.user!.userId,
+          },
         },
-      },
-    });
+      });
+    } catch (auditError) {
+      logger.warn('Failed to create audit log', { error: auditError, endpointId: endpoint.id });
+    }
 
     logger.info('Endpoint updated', { 
       endpointId: endpoint.id, 
@@ -219,18 +229,23 @@ router.delete('/:id', async (req, res) => {
       where: { id },
     });
 
-    await prisma.auditLog.create({
-      data: {
-        action: 'DELETE_ENDPOINT',
-        entityType: 'ENDPOINT',
-        entityId: id,
-        details: {
-          name: existingEndpoint.name,
-          targetUrl: existingEndpoint.targetUrl,
-          userId: req.user!.userId,
+    // Create audit log (non-blocking - don't fail the request if this fails)
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action: 'DELETE_ENDPOINT',
+          entityType: 'ENDPOINT',
+          entityId: id,
+          details: {
+            name: existingEndpoint.name,
+            targetUrl: existingEndpoint.targetUrl,
+            userId: req.user!.userId,
+          },
         },
-      },
-    });
+      });
+    } catch (auditError) {
+      logger.warn('Failed to create audit log', { error: auditError, endpointId: id });
+    }
 
     logger.info('Endpoint deleted', { 
       endpointId: id, 

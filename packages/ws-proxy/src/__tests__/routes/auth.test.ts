@@ -28,43 +28,48 @@ vi.mock('../../utils/logger', () => ({
   }),
 }));
 
-// Mock express Router
-vi.mock('express', () => ({
-  Router: vi.fn(),
-}));
-
-const mockBcrypt = vi.mocked(bcrypt);
-const mockJwt = vi.mocked(jwt);
-const mockRouter = vi.mocked(Router);
-
-// Mock prisma
+// Mock prisma first  
 const mockPrisma = createMockPrismaClient();
 vi.mock('../../services/database', () => ({
   prisma: mockPrisma,
 }));
 
+const mockBcrypt = vi.mocked(bcrypt);
+const mockJwt = vi.mocked(jwt);
+
+// Global setup for router mock
+const routes = [];
+
+const mockRouterInstance = {
+  post: vi.fn((path, handler) => routes.push({ method: 'POST', path, handler })),
+  get: vi.fn((path, handler) => routes.push({ method: 'GET', path, handler })),
+  put: vi.fn((path, handler) => routes.push({ method: 'PUT', path, handler })),
+  delete: vi.fn((path, handler) => routes.push({ method: 'DELETE', path, handler })),
+  patch: vi.fn((path, handler) => routes.push({ method: 'PATCH', path, handler })),
+  use: vi.fn(),
+};
+
+// Mock express Router to return our mock instance
+vi.mock('express', () => ({
+  Router: vi.fn(() => mockRouterInstance),
+}));
+
 // Helper to simulate route execution
 const executeRoute = async (method: string, path: string, body?: any, headers?: any) => {
-  const routes = [];
-  const mockRouterInstance = {
-    post: vi.fn((path, handler) => routes.push({ method: 'POST', path, handler })),
-    get: vi.fn((path, handler) => routes.push({ method: 'GET', path, handler })),
-    put: vi.fn((path, handler) => routes.push({ method: 'PUT', path, handler })),
-    delete: vi.fn((path, handler) => routes.push({ method: 'DELETE', path, handler })),
-    patch: vi.fn((path, handler) => routes.push({ method: 'PATCH', path, handler })),
-    use: vi.fn(),
-  };
-
-  // Override Router to capture routes
-  mockRouter.mockReturnValue(mockRouterInstance as any);
+  // Clear previous routes
+  routes.length = 0;
+  
+  // Reset all mocks to ensure clean state
+  vi.resetModules();
   
   // Re-import to get the router with mocked Router
   const { authRouter: testRouter } = await import('../../routes/auth');
   
+  // The router should have registered routes during import
   // Find the matching route
   const route = routes.find(r => r.method === method && r.path === path);
   if (!route) {
-    throw new Error(`Route ${method} ${path} not found`);
+    throw new Error(`Route ${method} ${path} not found. Available routes: ${routes.map(r => `${r.method} ${r.path}`).join(', ')}`);
   }
 
   // Create mock request and response
@@ -377,22 +382,18 @@ describe('Auth Routes', () => {
   });
 
   describe('Route Registration', () => {
-    it('should register POST /login route', () => {
-      const mockRouter = {
-        post: vi.fn(),
-        get: vi.fn(),
-        put: vi.fn(),
-        delete: vi.fn(),
-        patch: vi.fn(),
-        use: vi.fn(),
-      };
-
-      mockRouter.mockReturnValue(mockRouter as any);
+    it('should register POST /login route', async () => {
+      // Clear routes and re-import to trigger route registration
+      routes.length = 0;
+      vi.resetModules();
       
-      // Re-import to trigger route registration
-      require('../../routes/auth');
+      // Import the router to trigger route registration
+      const { authRouter: testRouter } = await import('../../routes/auth');
 
-      expect(mockRouter.post).toHaveBeenCalledWith('/login', expect.any(Function));
+      // Check that the POST /login route was registered
+      const loginRoute = routes.find(r => r.method === 'POST' && r.path === '/login');
+      expect(loginRoute).toBeDefined();
+      expect(loginRoute.handler).toEqual(expect.any(Function));
     });
   });
 

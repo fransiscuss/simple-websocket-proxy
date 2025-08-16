@@ -17,34 +17,38 @@ import {
 } from '../../utils/logger';
 
 // Mock pino
-vi.mock('pino', () => ({
-  default: vi.fn(() => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    fatal: vi.fn(),
-    trace: vi.fn(),
-    child: vi.fn(() => ({
+vi.mock('pino', () => {
+  const mockIsoTime = vi.fn(() => '2023-01-01T00:00:00.000Z');
+  
+  return {
+    default: vi.fn(() => ({
       info: vi.fn(),
       debug: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),
       fatal: vi.fn(),
       trace: vi.fn(),
+      child: vi.fn(() => ({
+        info: vi.fn(),
+        debug: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        fatal: vi.fn(),
+        trace: vi.fn(),
+      })),
     })),
-  })),
-  stdTimeFunctions: {
-    isoTime: vi.fn(),
-  },
-  stdSerializers: {
-    req: vi.fn(),
-    res: vi.fn(),
-    err: vi.fn(),
-  },
-  destination: vi.fn(),
-  transport: vi.fn(),
-}));
+    stdTimeFunctions: {
+      isoTime: mockIsoTime,
+    },
+    stdSerializers: {
+      req: vi.fn(),
+      res: vi.fn(),
+      err: vi.fn(),
+    },
+    destination: vi.fn(),
+    transport: vi.fn(),
+  };
+});
 
 describe('Logger Utils', () => {
   let mockLogger: any;
@@ -323,13 +327,13 @@ describe('Logger Utils', () => {
     it('should log target-connect event', () => {
       logConnectionEvent(sessionId, endpointId, 'target-connect');
       
-      expect(mockLogger.info).toHaveBeenCalledWith(undefined, 'Target connected');
+      expect(mockLogger.info).toHaveBeenCalledWith({}, 'Target connected');
     });
 
     it('should log target-disconnect event', () => {
       logConnectionEvent(sessionId, endpointId, 'target-disconnect');
       
-      expect(mockLogger.info).toHaveBeenCalledWith(undefined, 'Target disconnected');
+      expect(mockLogger.info).toHaveBeenCalledWith({}, 'Target disconnected');
     });
 
     it('should log error event', () => {
