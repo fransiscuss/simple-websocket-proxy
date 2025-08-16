@@ -1,0 +1,488 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+# Allow concurrent security scans for different triggers
+concurrency:
+  group: security-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20.x'
+  PNPM_VERSION: '8.15.6'
+
+jobs:
+  # Dependency vulnerability scanning
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run npm audit
+        run: |
+          echo "Running npm audit for vulnerability assessment..."
+          pnpm audit --audit-level moderate --format json > audit-results.json || true
+          
+          # Check if there are any high or critical vulnerabilities
+          HIGH_VULN=$(cat audit-results.json | jq '.vulnerabilities | to_entries[] | select(.value.severity == "high" or .value.severity == "critical") | length' 2>/dev/null || echo "0")
+          
+          if [[ "$HIGH_VULN" -gt 0 ]]; then
+            echo "High or critical vulnerabilities found!"
+            cat audit-results.json | jq '.vulnerabilities | to_entries[] | select(.value.severity == "high" or .value.severity == "critical")'
+            exit 1
+          fi
+          
+          echo "No high or critical vulnerabilities found"
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Upload audit results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-scan-results
+          path: |
+            audit-results.json
+            trivy-results.sarif
+          retention-days: 30
+
+  # Static Application Security Testing (SAST)
+  sast-scan:
+    name: Static Application Security Testing
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+          queries: security-and-quality
+
+      - name: Build packages for analysis
+        run: pnpm build
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
+
+      - name: Run Semgrep SAST
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/nodejs
+            p/typescript
+            p/react
+          generateSarif: "1"
+
+      - name: Upload Semgrep results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+
+  # Secret scanning
+  secret-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+      - name: Run GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}}
+
+  # Container security scanning
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    
+    strategy:
+      matrix:
+        service: [ws-proxy, ops-ui]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: packages/${{ matrix.service }}
+          file: packages/${{ matrix.service }}/Dockerfile
+          load: true
+          tags: ${{ matrix.service }}:security-scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy container scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ matrix.service }}:security-scan'
+          format: 'sarif'
+          output: 'trivy-container-${{ matrix.service }}.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Upload Trivy container scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-container-${{ matrix.service }}.sarif'
+
+      - name: Run Snyk container scan
+        continue-on-error: true
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: '${{ matrix.service }}:security-scan'
+          args: --severity-threshold=high --file=packages/${{ matrix.service }}/Dockerfile
+
+      - name: Upload Snyk results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: snyk.sarif
+
+  # Infrastructure as Code security scanning
+  iac-scan:
+    name: Infrastructure Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy IaC scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-iac.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Upload Trivy IaC scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-iac.sarif'
+
+      - name: Run Checkov IaC scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile,kubernetes,github_actions
+          output_format: sarif
+          output_file_path: checkov.sarif
+          soft_fail: true
+
+      - name: Upload Checkov scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+
+  # License compliance scanning
+  license-scan:
+    name: License Compliance Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install license-checker
+        run: npm install -g license-checker
+
+      - name: Check licenses
+        run: |
+          echo "Checking licenses for ws-proxy..."
+          cd packages/ws-proxy
+          license-checker --summary --excludePrivatePackages --failOn 'GPL;AGPL;LGPL;UNLICENSED' > ../../ws-proxy-licenses.txt
+          
+          echo "Checking licenses for ops-ui..."
+          cd ../ops-ui  
+          license-checker --summary --excludePrivatePackages --failOn 'GPL;AGPL;LGPL;UNLICENSED' > ../../ops-ui-licenses.txt
+          
+          cd ../..
+          echo "License check completed"
+
+      - name: Upload license reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-reports
+          path: |
+            ws-proxy-licenses.txt
+            ops-ui-licenses.txt
+          retention-days: 30
+
+  # Security policy compliance
+  compliance-check:
+    name: Security Policy Compliance
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for security policy files
+        run: |
+          echo "Checking for required security policy files..."
+          
+          # Check for SECURITY.md
+          if [[ ! -f "SECURITY.md" ]]; then
+            echo "❌ SECURITY.md file is missing"
+            MISSING_FILES=true
+          else
+            echo "✅ SECURITY.md found"
+          fi
+          
+          # Check for .gitignore
+          if [[ ! -f ".gitignore" ]]; then
+            echo "❌ .gitignore file is missing"
+            MISSING_FILES=true
+          else
+            echo "✅ .gitignore found"
+            
+            # Check for common sensitive patterns in .gitignore
+            PATTERNS=("*.env" "*.key" "*.pem" "*.p12" "*.pfx" "secrets" "config/local*")
+            for pattern in "${PATTERNS[@]}"; do
+              if ! grep -q "$pattern" .gitignore; then
+                echo "⚠️  Recommended pattern '$pattern' not found in .gitignore"
+              fi
+            done
+          fi
+          
+          # Check Dockerfile security practices
+          for dockerfile in $(find . -name "Dockerfile" -o -name "*.dockerfile"); do
+            echo "Checking $dockerfile for security best practices..."
+            
+            # Check if running as non-root user
+            if ! grep -q "USER" "$dockerfile"; then
+              echo "⚠️  $dockerfile: Consider adding USER instruction to run as non-root"
+            fi
+            
+            # Check for HEALTHCHECK
+            if ! grep -q "HEALTHCHECK" "$dockerfile"; then
+              echo "⚠️  $dockerfile: Consider adding HEALTHCHECK instruction"
+            fi
+          done
+          
+          if [[ "$MISSING_FILES" == "true" ]]; then
+            echo "Some required security files are missing"
+            exit 1
+          fi
+
+      - name: Check for hardcoded secrets patterns
+        run: |
+          echo "Checking for potential hardcoded secrets..."
+          
+          # Define patterns to search for
+          PATTERNS=(
+            "password\s*=\s*['\"][^'\"]{3,}"
+            "secret\s*=\s*['\"][^'\"]{3,}"
+            "token\s*=\s*['\"][^'\"]{3,}"
+            "api_key\s*=\s*['\"][^'\"]{3,}"
+            "private_key\s*=\s*['\"][^'\"]{3,}"
+          )
+          
+          FOUND_ISSUES=false
+          for pattern in "${PATTERNS[@]}"; do
+            if grep -r -i -E "$pattern" --include="*.ts" --include="*.js" --include="*.tsx" --include="*.jsx" --exclude-dir=node_modules --exclude-dir=.git .; then
+              echo "⚠️  Potential hardcoded secret found matching pattern: $pattern"
+              FOUND_ISSUES=true
+            fi
+          done
+          
+          if [[ "$FOUND_ISSUES" == "true" ]]; then
+            echo "Potential security issues found. Please review the matches above."
+            echo "Note: These may be false positives, but should be reviewed."
+          else
+            echo "✅ No obvious hardcoded secrets found"
+          fi
+
+  # Generate security report
+  security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, sast-scan, secret-scan, container-scan, iac-scan, license-scan, compliance-check]
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download scan artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: security-artifacts
+
+      - name: Generate security summary
+        run: |
+          echo "# Security Scan Summary" > security-summary.md
+          echo "Generated on: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> security-summary.md
+          echo "Commit: ${{ github.sha }}" >> security-summary.md
+          echo "" >> security-summary.md
+          
+          echo "## Scan Results" >> security-summary.md
+          echo "| Scan Type | Status | Notes |" >> security-summary.md
+          echo "|-----------|---------|-------|" >> security-summary.md
+          echo "| Dependency Scan | ${{ needs.dependency-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} | Vulnerability assessment |" >> security-summary.md
+          echo "| SAST Scan | ${{ needs.sast-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} | Static code analysis |" >> security-summary.md
+          echo "| Secret Scan | ${{ needs.secret-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} | Secret detection |" >> security-summary.md
+          echo "| Container Scan | ${{ needs.container-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} | Container image security |" >> security-summary.md
+          echo "| IaC Scan | ${{ needs.iac-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} | Infrastructure security |" >> security-summary.md
+          echo "| License Scan | ${{ needs.license-scan.result == 'success' && '✅ Passed' || '❌ Failed' }} | License compliance |" >> security-summary.md
+          echo "| Compliance Check | ${{ needs.compliance-check.result == 'success' && '✅ Passed' || '❌ Failed' }} | Security policy compliance |" >> security-summary.md
+          echo "" >> security-summary.md
+          
+          # Check if any critical scans failed
+          CRITICAL_FAILURE=false
+          if [[ "${{ needs.dependency-scan.result }}" == "failure" ]] || \
+             [[ "${{ needs.sast-scan.result }}" == "failure" ]] || \
+             [[ "${{ needs.secret-scan.result }}" == "failure" ]]; then
+            CRITICAL_FAILURE=true
+          fi
+          
+          if [[ "$CRITICAL_FAILURE" == "true" ]]; then
+            echo "## ⚠️ Critical Security Issues Detected" >> security-summary.md
+            echo "One or more critical security scans have failed. Please review the detailed results." >> security-summary.md
+            echo "" >> security-summary.md
+          else
+            echo "## ✅ No Critical Security Issues" >> security-summary.md
+            echo "All critical security scans have passed." >> security-summary.md
+            echo "" >> security-summary.md
+          fi
+          
+          echo "## Recommendations" >> security-summary.md
+          echo "- Review all SARIF files uploaded to the Security tab" >> security-summary.md
+          echo "- Address any high or critical vulnerabilities found" >> security-summary.md
+          echo "- Ensure all secrets are properly managed" >> security-summary.md
+          echo "- Keep dependencies up to date" >> security-summary.md
+          echo "- Follow container security best practices" >> security-summary.md
+
+      - name: Upload security summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-summary
+          path: security-summary.md
+          retention-days: 90
+
+      - name: Comment security summary on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Security Scan Results\n\n${summary}`
+            });
+
+      - name: Fail if critical security issues found
+        run: |
+          if [[ "${{ needs.dependency-scan.result }}" == "failure" ]] || \
+             [[ "${{ needs.sast-scan.result }}" == "failure" ]] || \
+             [[ "${{ needs.secret-scan.result }}" == "failure" ]]; then
+            echo "Critical security scans failed"
+            exit 1
+          fi
+          echo "All critical security scans passed"

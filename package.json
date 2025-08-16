@@ -1,0 +1,21 @@
+{
+  "name": "simple-websocket-proxy",
+  "version": "1.0.0",
+  "description": "Low-latency bidirectional WebSocket proxy with ops UI",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "docker-compose -f docker/docker-compose.dev.yml up",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "packageManager": "pnpm@8.0.0"
+}

@@ -1,0 +1,515 @@
+name: Performance Testing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run performance tests weekly on Sundays at 4 AM UTC
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Test duration in seconds'
+        required: false
+        default: '60'
+        type: string
+      connections:
+        description: 'Number of concurrent connections'
+        required: false
+        default: '100'
+        type: string
+
+env:
+  NODE_VERSION: '20.x'
+  PNPM_VERSION: '8.15.6'
+
+jobs:
+  # WebSocket proxy performance testing
+  websocket-performance:
+    name: WebSocket Performance Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test123
+          POSTGRES_DB: websocket_proxy_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build ws-proxy
+        working-directory: packages/ws-proxy
+        run: |
+          pnpm build
+          pnpm db:generate
+          pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+
+      - name: Start ws-proxy for testing
+        working-directory: packages/ws-proxy
+        run: |
+          pnpm start &
+          WS_PROXY_PID=$!
+          echo "WS_PROXY_PID=$WS_PROXY_PID" >> $GITHUB_ENV
+          
+          # Wait for service to be ready
+          timeout 30s bash -c 'until curl -f http://localhost:8080/healthz; do sleep 2; done'
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+          JWT_SECRET: test-jwt-secret
+          DEFAULT_ADMIN_EMAIL: admin@test.com
+          DEFAULT_ADMIN_PASSWORD: test123
+
+      - name: Install Artillery for load testing
+        run: npm install -g artillery@latest
+
+      - name: Create performance test configuration
+        run: |
+          cat > artillery-config.yml << EOF
+          config:
+            target: 'ws://localhost:8080'
+            phases:
+              - duration: ${{ github.event.inputs.duration || '60' }}
+                arrivalRate: ${{ github.event.inputs.connections || '100' }}
+            ws:
+              connect:
+                timeout: 5000
+          scenarios:
+            - name: "WebSocket Connection Test"
+              weight: 70
+              engine: ws
+              flow:
+                - connect:
+                    url: "/ws/test-endpoint"
+                - think: 1
+                - send: '{"type":"ping","timestamp":"{{ \$timestamp }}"}'
+                - think: 2
+                - send: '{"type":"message","data":"performance test data"}'
+                - think: 1
+            - name: "WebSocket Burst Test"
+              weight: 30
+              engine: ws
+              flow:
+                - connect:
+                    url: "/ws/test-endpoint"
+                - loop:
+                  - send: '{"type":"burst","id":"{{ \$randomNumber(1,1000) }}"}'
+                  count: 10
+                - think: 5
+          EOF
+
+      - name: Run WebSocket performance tests
+        run: |
+          echo "Running WebSocket performance tests..."
+          artillery run artillery-config.yml --output performance-results.json
+
+      - name: Generate performance report
+        run: |
+          echo "Generating performance report..."
+          artillery report performance-results.json --output performance-report.html
+          
+          # Create markdown summary
+          echo "## WebSocket Performance Test Results" > performance-summary.md
+          echo "Generated on: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> performance-summary.md
+          echo "Commit: ${{ github.sha }}" >> performance-summary.md
+          echo "" >> performance-summary.md
+          
+          # Extract key metrics (this is a simplified version)
+          echo "### Test Configuration" >> performance-summary.md
+          echo "- Duration: ${{ github.event.inputs.duration || '60' }} seconds" >> performance-summary.md
+          echo "- Concurrent connections: ${{ github.event.inputs.connections || '100' }}" >> performance-summary.md
+          echo "" >> performance-summary.md
+          
+          echo "### Results" >> performance-summary.md
+          echo "Detailed results are available in the performance report HTML file." >> performance-summary.md
+
+      - name: Stop ws-proxy
+        if: always()
+        run: kill $WS_PROXY_PID || true
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: websocket-performance-results
+          path: |
+            performance-results.json
+            performance-report.html
+            performance-summary.md
+          retention-days: 30
+
+  # Frontend performance testing
+  frontend-performance:
+    name: Frontend Performance Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test123
+          POSTGRES_DB: websocket_proxy_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Start test services
+        run: |
+          # Start ws-proxy
+          cd packages/ws-proxy
+          pnpm db:generate
+          pnpm db:migrate
+          pnpm start &
+          WS_PROXY_PID=$!
+          echo "WS_PROXY_PID=$WS_PROXY_PID" >> $GITHUB_ENV
+          
+          # Start ops-ui
+          cd ../ops-ui
+          pnpm start &
+          OPS_UI_PID=$!
+          echo "OPS_UI_PID=$OPS_UI_PID" >> $GITHUB_ENV
+          
+          # Wait for services
+          timeout 60s bash -c 'until curl -f http://localhost:8080/healthz; do sleep 2; done'
+          timeout 60s bash -c 'until curl -f http://localhost:3000/api/healthz; do sleep 2; done'
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+          JWT_SECRET: test-jwt-secret
+          DEFAULT_ADMIN_EMAIL: admin@test.com
+          DEFAULT_ADMIN_PASSWORD: test123
+          API_BASE_URL: http://localhost:8080/api
+          NEXT_PUBLIC_WS_OPS_URL: ws://localhost:8080/ops
+
+      - name: Install Lighthouse CI
+        run: npm install -g @lhci/cli@latest
+
+      - name: Run Lighthouse performance audit
+        run: |
+          echo "Running Lighthouse performance audit..."
+          
+          # Create Lighthouse CI configuration
+          cat > lighthouserc.js << 'EOF'
+          module.exports = {
+            ci: {
+              collect: {
+                url: ['http://localhost:3000', 'http://localhost:3000/dashboard', 'http://localhost:3000/endpoints'],
+                numberOfRuns: 3,
+                settings: {
+                  chromeFlags: '--no-sandbox --disable-dev-shm-usage',
+                },
+              },
+              assert: {
+                assertions: {
+                  'categories:performance': ['warn', {minScore: 0.8}],
+                  'categories:accessibility': ['error', {minScore: 0.9}],
+                  'categories:best-practices': ['warn', {minScore: 0.8}],
+                  'categories:seo': ['warn', {minScore: 0.8}],
+                },
+              },
+              upload: {
+                target: 'temporary-public-storage',
+              },
+            },
+          };
+          EOF
+          
+          # Run Lighthouse CI
+          lhci autorun --config=lighthouserc.js
+
+      - name: Stop services
+        if: always()
+        run: |
+          kill $WS_PROXY_PID || true
+          kill $OPS_UI_PID || true
+
+      - name: Upload Lighthouse results
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-performance-results
+          path: |
+            .lighthouseci/
+          retention-days: 30
+
+  # Database performance testing
+  database-performance:
+    name: Database Performance Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test123
+          POSTGRES_DB: websocket_proxy_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        working-directory: packages/ws-proxy
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup database
+        working-directory: packages/ws-proxy
+        run: |
+          pnpm db:generate
+          pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+
+      - name: Run database performance tests
+        working-directory: packages/ws-proxy
+        run: |
+          cat > db-performance-test.js << 'EOF'
+          const { PrismaClient } = require('@prisma/client');
+          const prisma = new PrismaClient();
+
+          async function performanceTest() {
+            console.log('Starting database performance tests...');
+            
+            const startTime = Date.now();
+            
+            // Test 1: Bulk endpoint creation
+            console.log('Test 1: Bulk endpoint creation');
+            const endpoints = [];
+            for (let i = 0; i < 1000; i++) {
+              endpoints.push({
+                name: `endpoint-${i}`,
+                description: `Performance test endpoint ${i}`,
+                targetUrl: `ws://test-${i}.example.com`,
+                isActive: true,
+                limits: { maxConnections: 100, maxMessageSize: 1048576, timeoutMs: 30000 },
+                sampling: { enabled: false, percentage: 0 }
+              });
+            }
+            
+            const createStart = Date.now();
+            await prisma.endpoint.createMany({ data: endpoints });
+            console.log(`Created 1000 endpoints in ${Date.now() - createStart}ms`);
+            
+            // Test 2: Query performance
+            console.log('Test 2: Query performance');
+            const queryStart = Date.now();
+            const count = await prisma.endpoint.count();
+            const recent = await prisma.endpoint.findMany({
+              take: 100,
+              orderBy: { createdAt: 'desc' }
+            });
+            console.log(`Queried ${count} endpoints and fetched 100 in ${Date.now() - queryStart}ms`);
+            
+            // Test 3: Bulk session creation
+            console.log('Test 3: Bulk session creation');
+            const sessions = [];
+            for (let i = 0; i < 500; i++) {
+              sessions.push({
+                endpointId: recent[i % recent.length].id,
+                connectionId: `test-conn-${i}`,
+                clientIp: '127.0.0.1',
+                userAgent: 'Performance Test',
+                connectedAt: new Date(),
+                isActive: true,
+                messagesSent: Math.floor(Math.random() * 100),
+                messagesReceived: Math.floor(Math.random() * 100),
+                bytesSent: Math.floor(Math.random() * 10000),
+                bytesReceived: Math.floor(Math.random() * 10000)
+              });
+            }
+            
+            const sessionStart = Date.now();
+            await prisma.liveSession.createMany({ data: sessions });
+            console.log(`Created 500 sessions in ${Date.now() - sessionStart}ms`);
+            
+            // Test 4: Complex query with joins
+            console.log('Test 4: Complex query with joins');
+            const complexStart = Date.now();
+            const endpointsWithSessions = await prisma.endpoint.findMany({
+              include: {
+                liveSessions: {
+                  where: { isActive: true },
+                  take: 10
+                }
+              },
+              take: 50
+            });
+            console.log(`Complex query with joins completed in ${Date.now() - complexStart}ms`);
+            
+            const totalTime = Date.now() - startTime;
+            console.log(`\nTotal test time: ${totalTime}ms`);
+            
+            // Generate performance report
+            const report = {
+              timestamp: new Date().toISOString(),
+              totalTime,
+              tests: {
+                bulkInsert: `${Date.now() - createStart}ms`,
+                queries: `${Date.now() - queryStart}ms`,
+                sessionInsert: `${Date.now() - sessionStart}ms`,
+                complexQuery: `${Date.now() - complexStart}ms`
+              },
+              recordsCounted: count,
+              recordsCreated: endpoints.length + sessions.length
+            };
+            
+            require('fs').writeFileSync('db-performance-report.json', JSON.stringify(report, null, 2));
+            console.log('Performance report saved to db-performance-report.json');
+          }
+
+          performanceTest().catch(console.error).finally(() => prisma.$disconnect());
+          EOF
+          
+          node db-performance-test.js
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+
+      - name: Upload database performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-performance-results
+          path: packages/ws-proxy/db-performance-report.json
+          retention-days: 30
+
+  # Performance analysis and reporting
+  performance-report:
+    name: Performance Analysis Report
+    runs-on: ubuntu-latest
+    needs: [websocket-performance, frontend-performance, database-performance]
+    if: always()
+    
+    steps:
+      - name: Download all performance artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: performance-artifacts
+
+      - name: Generate comprehensive performance report
+        run: |
+          echo "# Performance Test Report" > performance-report.md
+          echo "Generated on: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> performance-report.md
+          echo "Commit: ${{ github.sha }}" >> performance-report.md
+          echo "Trigger: ${{ github.event_name }}" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          echo "## Test Results Summary" >> performance-report.md
+          echo "| Test Type | Status | Notes |" >> performance-report.md
+          echo "|-----------|--------|-------|" >> performance-report.md
+          echo "| WebSocket Performance | ${{ needs.websocket-performance.result == 'success' && '✅ Passed' || '❌ Failed' }} | Load testing with Artillery |" >> performance-report.md
+          echo "| Frontend Performance | ${{ needs.frontend-performance.result == 'success' && '✅ Passed' || '❌ Failed' }} | Lighthouse audit |" >> performance-report.md
+          echo "| Database Performance | ${{ needs.database-performance.result == 'success' && '✅ Passed' || '❌ Failed' }} | Database operation timing |" >> performance-report.md
+          echo "" >> performance-report.md
+          
+          # Include individual reports if available
+          if [[ -f "performance-artifacts/websocket-performance-results/performance-summary.md" ]]; then
+            echo "## WebSocket Performance Results" >> performance-report.md
+            cat performance-artifacts/websocket-performance-results/performance-summary.md >> performance-report.md
+            echo "" >> performance-report.md
+          fi
+          
+          if [[ -f "performance-artifacts/database-performance-results/db-performance-report.json" ]]; then
+            echo "## Database Performance Results" >> performance-report.md
+            echo '```json' >> performance-report.md
+            cat performance-artifacts/database-performance-results/db-performance-report.json >> performance-report.md
+            echo '```' >> performance-report.md
+            echo "" >> performance-report.md
+          fi
+          
+          echo "## Recommendations" >> performance-report.md
+          echo "- Monitor WebSocket connection handling under load" >> performance-report.md
+          echo "- Optimize frontend bundle size and loading times" >> performance-report.md
+          echo "- Review database query performance and indexing" >> performance-report.md
+          echo "- Set up continuous performance monitoring" >> performance-report.md
+          echo "- Establish performance regression thresholds" >> performance-report.md
+
+      - name: Upload comprehensive performance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: comprehensive-performance-report
+          path: performance-report.md
+          retention-days: 90
+
+      - name: Comment performance results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('performance-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Performance Test Results\n\n${report}`
+            });

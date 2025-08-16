@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AppUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole @default(ADMIN)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("app_user")
+}
+
+model Endpoint {
+  id          String   @id @default(cuid())
+  name        String
+  targetUrl   String   @map("target_url")
+  limits      Json     @default("{}")
+  sampling    Json     @default("{}")
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  liveSessions  LiveSession[]
+  trafficSamples TrafficSample[]
+
+  @@map("endpoint")
+}
+
+model LiveSession {
+  id         String   @id @default(cuid())
+  endpointId String   @map("endpoint_id")
+  startedAt  DateTime @default(now()) @map("started_at")
+  lastSeen   DateTime @default(now()) @map("last_seen")
+  msgsIn     Int      @default(0) @map("msgs_in")
+  msgsOut    Int      @default(0) @map("msgs_out")
+  bytesIn    BigInt   @default(0) @map("bytes_in")
+  bytesOut   BigInt   @default(0) @map("bytes_out")
+  state      SessionState @default(ACTIVE)
+
+  endpoint       Endpoint        @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  trafficSamples TrafficSample[]
+
+  @@map("live_session")
+}
+
+model TrafficSample {
+  id        String    @id @default(cuid())
+  sessionId String    @map("session_id")
+  direction Direction
+  timestamp DateTime  @default(now())
+  sizeBytes Int       @map("size_bytes")
+  content   String?
+
+  session LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  endpoint Endpoint   @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  endpointId String   @map("endpoint_id")
+
+  @@map("traffic_sample")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  details    Json     @default("{}")
+  timestamp  DateTime @default(now())
+
+  @@map("audit_log")
+}
+
+enum UserRole {
+  ADMIN
+}
+
+enum SessionState {
+  ACTIVE
+  CLOSED
+  FAILED
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}

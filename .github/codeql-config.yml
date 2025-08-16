@@ -1,0 +1,56 @@
+# CodeQL configuration for WebSocket Proxy project
+# See: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/customizing-code-scanning
+
+name: "WebSocket Proxy CodeQL Config"
+
+# Disable default queries and specify custom ones
+disable-default-queries: false
+
+# Query suites to run
+queries:
+  - uses: security-extended
+  - uses: security-and-quality
+
+# Paths to include in analysis
+paths:
+  - packages/ws-proxy/src
+  - packages/ops-ui/app
+  - packages/ops-ui/components
+  - packages/ops-ui/lib
+
+# Paths to exclude from analysis
+paths-ignore:
+  - node_modules
+  - "**/node_modules"
+  - dist
+  - "**/dist"
+  - build
+  - "**/build"
+  - .next
+  - "**/.next"
+  - coverage
+  - "**/coverage"
+  - "**/__tests__"
+  - "**/*.test.ts"
+  - "**/*.test.js"
+  - "**/*.spec.ts"
+  - "**/*.spec.js"
+  - "**/test-setup.ts"
+  - "**/vitest.config.ts"
+  - "**/playwright.config.ts"
+  - "**/tailwind.config.ts"
+  - "**/next.config.js"
+  - "**/postcss.config.js"
+
+# Additional packs to run
+packs:
+  - codeql/javascript-queries:Security/CWE-079
+  - codeql/javascript-queries:Security/CWE-089
+  - codeql/javascript-queries:Security/CWE-094
+  - codeql/javascript-queries:Security/CWE-116
+  - codeql/javascript-queries:Security/CWE-200
+  - codeql/javascript-queries:Security/CWE-312
+  - codeql/javascript-queries:Security/CWE-434
+  - codeql/javascript-queries:Security/CWE-502
+  - codeql/javascript-queries:Security/CWE-798
+  - codeql/javascript-queries:Security/CWE-918

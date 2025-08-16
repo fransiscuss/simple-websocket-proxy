@@ -1,0 +1,219 @@
+# Dependabot configuration for automated dependency updates
+# See: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+
+updates:
+  # Node.js dependencies for ws-proxy package
+  - package-ecosystem: "npm"
+    directory: "/packages/ws-proxy"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(ws-proxy)"
+      include: "scope"
+    reviewers:
+      - "websocket-proxy-maintainers"
+    assignees:
+      - "websocket-proxy-maintainers"
+    labels:
+      - "dependencies"
+      - "ws-proxy"
+      - "automated-pr"
+    milestone: "Next Release"
+    # Group patch updates together to reduce PR noise
+    groups:
+      patch-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+      minor-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+    # Allow both direct and indirect dependencies
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    # Ignore specific packages that require manual updates
+    ignore:
+      # Ignore major version updates for critical packages
+      - dependency-name: "@prisma/client"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      # Ignore Node.js types patch updates (too noisy)
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-patch"]
+
+  # Node.js dependencies for ops-ui package
+  - package-ecosystem: "npm"
+    directory: "/packages/ops-ui"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:30"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(ops-ui)"
+      include: "scope"
+    reviewers:
+      - "websocket-proxy-maintainers"
+    assignees:
+      - "websocket-proxy-maintainers"
+    labels:
+      - "dependencies"
+      - "ops-ui"
+      - "automated-pr"
+    milestone: "Next Release"
+    # Group updates to reduce PR noise
+    groups:
+      patch-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+      minor-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+      radix-ui-updates:
+        patterns:
+          - "@radix-ui/*"
+        update-types:
+          - "minor"
+          - "patch"
+      react-updates:
+        patterns:
+          - "react*"
+          - "@types/react*"
+        update-types:
+          - "minor"
+          - "patch"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore major updates for React ecosystem (requires testing)
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      # Ignore Node.js types patch updates
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-patch"]
+
+  # Root workspace dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(root)"
+      include: "scope"
+    reviewers:
+      - "websocket-proxy-maintainers"
+    assignees:
+      - "websocket-proxy-maintainers"
+    labels:
+      - "dependencies"
+      - "workspace"
+      - "automated-pr"
+    milestone: "Next Release"
+    groups:
+      dev-dependencies:
+        patterns:
+          - "*"
+        dependency-type: "development"
+    allow:
+      - dependency-type: "direct"
+    ignore:
+      # Ignore patch updates for TypeScript (can be noisy)
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-patch"]
+
+  # Docker base images
+  - package-ecosystem: "docker"
+    directory: "/packages/ws-proxy"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
+    reviewers:
+      - "websocket-proxy-maintainers"
+    assignees:
+      - "websocket-proxy-maintainers"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "automated-pr"
+    milestone: "Next Release"
+
+  - package-ecosystem: "docker"
+    directory: "/packages/ops-ui"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "06:15"
+      timezone: "UTC"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
+    reviewers:
+      - "websocket-proxy-maintainers"
+    assignees:
+      - "websocket-proxy-maintainers"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "automated-pr"
+    milestone: "Next Release"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "07:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(actions)"
+      include: "scope"
+    reviewers:
+      - "websocket-proxy-maintainers"
+    assignees:
+      - "websocket-proxy-maintainers"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "automated-pr"
+    milestone: "Next Release"
+    groups:
+      actions-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

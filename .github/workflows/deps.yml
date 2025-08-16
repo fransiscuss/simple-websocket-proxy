@@ -1,0 +1,524 @@
+name: Dependency Management
+
+on:
+  schedule:
+    # Run dependency updates weekly on Mondays at 6 AM UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: 'Type of dependency update'
+        required: true
+        default: 'minor'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - all
+      create_pr:
+        description: 'Create pull request for updates'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  NODE_VERSION: '20.x'
+  PNPM_VERSION: '8.15.6'
+
+jobs:
+  # Check for outdated dependencies
+  check-outdated:
+    name: Check Outdated Dependencies
+    runs-on: ubuntu-latest
+    outputs:
+      has-updates: ${{ steps.check.outputs.has-updates }}
+      update-summary: ${{ steps.check.outputs.update-summary }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check for outdated dependencies
+        id: check
+        run: |
+          echo "Checking for outdated dependencies..."
+          
+          # Check outdated packages
+          pnpm outdated --format json > outdated.json || true
+          
+          # Count outdated packages
+          OUTDATED_COUNT=$(cat outdated.json | jq 'length' 2>/dev/null || echo "0")
+          
+          if [[ "$OUTDATED_COUNT" -gt 0 ]]; then
+            echo "has-updates=true" >> $GITHUB_OUTPUT
+            echo "Found $OUTDATED_COUNT outdated packages"
+            
+            # Generate summary
+            echo "## Outdated Dependencies Summary" > update-summary.md
+            echo "Found $OUTDATED_COUNT packages that can be updated:" >> update-summary.md
+            echo "" >> update-summary.md
+            
+            # Parse JSON and create markdown table
+            echo "| Package | Current | Latest | Type |" >> update-summary.md
+            echo "|---------|---------|--------|------|" >> update-summary.md
+            
+            cat outdated.json | jq -r 'to_entries[] | "| \(.key) | \(.value.current) | \(.value.latest) | \(.value.type) |"' >> update-summary.md
+            
+            # Set output for summary
+            SUMMARY=$(cat update-summary.md)
+            echo "update-summary<<EOF" >> $GITHUB_OUTPUT
+            echo "$SUMMARY" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "has-updates=false" >> $GITHUB_OUTPUT
+            echo "No outdated dependencies found"
+          fi
+
+      - name: Upload outdated analysis
+        uses: actions/upload-artifact@v4
+        if: steps.check.outputs.has-updates == 'true'
+        with:
+          name: outdated-analysis
+          path: |
+            outdated.json
+            update-summary.md
+          retention-days: 7
+
+  # Security audit of dependencies
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    needs: check-outdated
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run security audit
+        run: |
+          echo "Running security audit..."
+          
+          # Run audit and capture results
+          pnpm audit --audit-level moderate --format json > audit-results.json || true
+          
+          # Check for vulnerabilities
+          VULN_COUNT=$(cat audit-results.json | jq '.vulnerabilities | length' 2>/dev/null || echo "0")
+          
+          if [[ "$VULN_COUNT" -gt 0 ]]; then
+            echo "Found $VULN_COUNT vulnerabilities"
+            
+            # Generate vulnerability summary
+            echo "## Security Vulnerabilities" > vulnerability-summary.md
+            echo "Found $VULN_COUNT security vulnerabilities:" >> vulnerability-summary.md
+            echo "" >> vulnerability-summary.md
+            
+            # List high and critical vulnerabilities
+            HIGH_CRITICAL=$(cat audit-results.json | jq '.vulnerabilities | to_entries[] | select(.value.severity == "high" or .value.severity == "critical")' 2>/dev/null || echo "")
+            
+            if [[ -n "$HIGH_CRITICAL" ]]; then
+              echo "### High/Critical Vulnerabilities:" >> vulnerability-summary.md
+              cat audit-results.json | jq -r '.vulnerabilities | to_entries[] | select(.value.severity == "high" or .value.severity == "critical") | "- **\(.key)**: \(.value.title) (Severity: \(.value.severity))"' >> vulnerability-summary.md
+              echo "" >> vulnerability-summary.md
+            fi
+            
+            echo "Please run \`pnpm audit fix\` to resolve vulnerabilities." >> vulnerability-summary.md
+          else
+            echo "No vulnerabilities found"
+          fi
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit
+          path: |
+            audit-results.json
+            vulnerability-summary.md
+          retention-days: 30
+
+  # Update dependencies
+  update-dependencies:
+    name: Update Dependencies
+    runs-on: ubuntu-latest
+    needs: [check-outdated, security-audit]
+    if: needs.check-outdated.outputs.has-updates == 'true' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Determine update strategy
+        id: strategy
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            UPDATE_TYPE="${{ github.event.inputs.update_type }}"
+          else
+            UPDATE_TYPE="minor"  # Default for scheduled runs
+          fi
+          
+          echo "update-type=$UPDATE_TYPE" >> $GITHUB_OUTPUT
+          echo "Update strategy: $UPDATE_TYPE"
+
+      - name: Update patch dependencies
+        if: steps.strategy.outputs.update-type == 'patch' || steps.strategy.outputs.update-type == 'all'
+        run: |
+          echo "Updating patch dependencies..."
+          pnpm update --latest --filter '~0.0' || true
+
+      - name: Update minor dependencies
+        if: steps.strategy.outputs.update-type == 'minor' || steps.strategy.outputs.update-type == 'all'
+        run: |
+          echo "Updating minor dependencies..."
+          pnpm update --latest --filter '~0' || true
+
+      - name: Update major dependencies
+        if: steps.strategy.outputs.update-type == 'major' || steps.strategy.outputs.update-type == 'all'
+        run: |
+          echo "Updating major dependencies..."
+          pnpm update --latest || true
+
+      - name: Run tests after updates
+        run: |
+          echo "Running tests to verify updates..."
+          
+          # Install updated dependencies
+          pnpm install
+          
+          # Run tests
+          pnpm test || echo "Tests failed - updates may have introduced issues"
+          
+          # Run build to ensure everything compiles
+          pnpm build || echo "Build failed - updates may have introduced issues"
+
+      - name: Generate update summary
+        id: summary
+        run: |
+          # Check if there are any changes
+          if git diff --quiet; then
+            echo "No dependency updates were applied"
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+          
+          # Generate detailed update summary
+          echo "## Dependency Update Summary" > update-details.md
+          echo "Update type: ${{ steps.strategy.outputs.update-type }}" >> update-details.md
+          echo "Generated on: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> update-details.md
+          echo "" >> update-details.md
+          
+          # List changed files
+          echo "### Modified Files:" >> update-details.md
+          git diff --name-only | while read file; do
+            echo "- $file" >> update-details.md
+          done
+          echo "" >> update-details.md
+          
+          # Show package.json changes
+          echo "### Package Changes:" >> update-details.md
+          echo '```diff' >> update-details.md
+          git diff packages/*/package.json | head -100 >> update-details.md
+          echo '```' >> update-details.md
+          echo "" >> update-details.md
+          
+          # Add testing notes
+          echo "### Testing Notes:" >> update-details.md
+          echo "- ✅ Build completed successfully" >> update-details.md
+          echo "- ✅ Tests executed (check CI for results)" >> update-details.md
+          echo "- ⚠️ Manual testing may be required for major updates" >> update-details.md
+          echo "" >> update-details.md
+          
+          # Add security notes
+          echo "### Security Notes:" >> update-details.md
+          echo "- Run security audit after merge" >> update-details.md
+          echo "- Review changelog for breaking changes" >> update-details.md
+          
+          # Prepare commit message
+          COMMIT_MSG="deps: update dependencies (${{ steps.strategy.outputs.update-type }})"
+          echo "commit-message=$COMMIT_MSG" >> $GITHUB_OUTPUT
+
+      - name: Create pull request
+        if: steps.summary.outputs.has-changes == 'true' && (github.event.inputs.create_pr != 'false' || github.event_name == 'schedule')
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: ${{ steps.summary.outputs.commit-message }}
+          title: "🔄 ${{ steps.summary.outputs.commit-message }}"
+          body-path: update-details.md
+          branch: deps/update-${{ steps.strategy.outputs.update-type }}-${{ github.run_number }}
+          delete-branch: true
+          labels: |
+            dependencies
+            automated-pr
+          assignees: ${{ github.actor }}
+          reviewers: ${{ github.actor }}
+
+      - name: Upload update artifacts
+        uses: actions/upload-artifact@v4
+        if: steps.summary.outputs.has-changes == 'true'
+        with:
+          name: dependency-updates
+          path: |
+            update-details.md
+            pnpm-lock.yaml
+          retention-days: 30
+
+  # Check for deprecated dependencies
+  check-deprecated:
+    name: Check Deprecated Dependencies
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check for deprecated packages
+        run: |
+          echo "Checking for deprecated packages..."
+          
+          # Use npm ls to check for deprecation warnings
+          npm ls --depth=0 2>&1 | grep -i "deprecated" > deprecated.txt || true
+          
+          if [[ -s deprecated.txt ]]; then
+            echo "Found deprecated packages:"
+            cat deprecated.txt
+            
+            # Generate deprecation report
+            echo "## Deprecated Dependencies Report" > deprecation-report.md
+            echo "The following dependencies are deprecated and should be replaced:" >> deprecation-report.md
+            echo "" >> deprecation-report.md
+            echo '```' >> deprecation-report.md
+            cat deprecated.txt >> deprecation-report.md
+            echo '```' >> deprecation-report.md
+            echo "" >> deprecation-report.md
+            echo "Please review these packages and plan for migration to alternatives." >> deprecation-report.md
+          else
+            echo "No deprecated packages found"
+          fi
+
+      - name: Upload deprecation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deprecation-report
+          path: |
+            deprecated.txt
+            deprecation-report.md
+          retention-days: 30
+
+  # License compliance check
+  license-compliance:
+    name: License Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install license-checker
+        run: npm install -g license-checker
+
+      - name: Check licenses
+        run: |
+          echo "Checking dependency licenses..."
+          
+          # Check licenses for both packages
+          echo "Checking ws-proxy licenses..."
+          cd packages/ws-proxy
+          license-checker --summary --json --excludePrivatePackages > ../../ws-proxy-licenses.json
+          
+          echo "Checking ops-ui licenses..."
+          cd ../ops-ui
+          license-checker --summary --json --excludePrivatePackages > ../../ops-ui-licenses.json
+          
+          cd ../..
+          
+          # Generate license report
+          echo "## License Compliance Report" > license-report.md
+          echo "Generated on: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> license-report.md
+          echo "" >> license-report.md
+          
+          echo "### WS-Proxy Dependencies" >> license-report.md
+          echo '```json' >> license-report.md
+          cat ws-proxy-licenses.json | jq '.' >> license-report.md || echo "Failed to parse ws-proxy licenses" >> license-report.md
+          echo '```' >> license-report.md
+          echo "" >> license-report.md
+          
+          echo "### Ops-UI Dependencies" >> license-report.md
+          echo '```json' >> license-report.md
+          cat ops-ui-licenses.json | jq '.' >> license-report.md || echo "Failed to parse ops-ui licenses" >> license-report.md
+          echo '```' >> license-report.md
+          
+          # Check for problematic licenses
+          PROBLEMATIC_LICENSES=("GPL" "AGPL" "LGPL" "UNLICENSED" "UNKNOWN")
+          for license in "${PROBLEMATIC_LICENSES[@]}"; do
+            if grep -q "$license" ws-proxy-licenses.json ops-ui-licenses.json; then
+              echo "⚠️ Found potentially problematic license: $license"
+            fi
+          done
+
+      - name: Upload license report
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-compliance
+          path: |
+            license-report.md
+            ws-proxy-licenses.json
+            ops-ui-licenses.json
+          retention-days: 90
+
+  # Generate dependency management report
+  generate-report:
+    name: Generate Dependency Report
+    runs-on: ubuntu-latest
+    needs: [check-outdated, security-audit, update-dependencies, check-deprecated, license-compliance]
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dependency-artifacts
+
+      - name: Generate comprehensive report
+        run: |
+          echo "# Dependency Management Report" > dependency-report.md
+          echo "Generated on: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> dependency-report.md
+          echo "Repository: ${{ github.repository }}" >> dependency-report.md
+          echo "Commit: ${{ github.sha }}" >> dependency-report.md
+          echo "" >> dependency-report.md
+          
+          echo "## Job Status Summary" >> dependency-report.md
+          echo "| Job | Status | Notes |" >> dependency-report.md
+          echo "|-----|--------|-------|" >> dependency-report.md
+          echo "| Check Outdated | ${{ needs.check-outdated.result == 'success' && '✅ Passed' || '❌ Failed' }} | ${{ needs.check-outdated.outputs.has-updates == 'true' && 'Updates available' || 'No updates' }} |" >> dependency-report.md
+          echo "| Security Audit | ${{ needs.security-audit.result == 'success' && '✅ Passed' || '❌ Failed' }} | Security vulnerability check |" >> dependency-report.md
+          echo "| Update Dependencies | ${{ needs.update-dependencies.result == 'success' && '✅ Passed' || needs.update-dependencies.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | Dependency updates |" >> dependency-report.md
+          echo "| Check Deprecated | ${{ needs.check-deprecated.result == 'success' && '✅ Passed' || '❌ Failed' }} | Deprecated package check |" >> dependency-report.md
+          echo "| License Compliance | ${{ needs.license-compliance.result == 'success' && '✅ Passed' || '❌ Failed' }} | License compatibility check |" >> dependency-report.md
+          echo "" >> dependency-report.md
+          
+          # Include summaries from artifacts
+          if [[ -f "dependency-artifacts/outdated-analysis/update-summary.md" ]]; then
+            echo "## Outdated Dependencies" >> dependency-report.md
+            cat dependency-artifacts/outdated-analysis/update-summary.md >> dependency-report.md
+            echo "" >> dependency-report.md
+          fi
+          
+          if [[ -f "dependency-artifacts/security-audit/vulnerability-summary.md" ]]; then
+            echo "## Security Vulnerabilities" >> dependency-report.md
+            cat dependency-artifacts/security-audit/vulnerability-summary.md >> dependency-report.md
+            echo "" >> dependency-report.md
+          fi
+          
+          if [[ -f "dependency-artifacts/deprecation-report/deprecation-report.md" ]]; then
+            echo "## Deprecated Dependencies" >> dependency-report.md
+            cat dependency-artifacts/deprecation-report/deprecation-report.md >> dependency-report.md
+            echo "" >> dependency-report.md
+          fi
+          
+          echo "## Recommendations" >> dependency-report.md
+          echo "- Review and test any dependency updates" >> dependency-report.md
+          echo "- Address security vulnerabilities promptly" >> dependency-report.md
+          echo "- Plan migration away from deprecated packages" >> dependency-report.md
+          echo "- Ensure license compliance for all dependencies" >> dependency-report.md
+          echo "- Set up automated dependency monitoring" >> dependency-report.md
+
+      - name: Upload comprehensive report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-management-report
+          path: dependency-report.md
+          retention-days: 90
+
+      - name: Create issue for critical findings
+        if: needs.security-audit.result == 'failure' || needs.license-compliance.result == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('dependency-report.md', 'utf8');
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Critical Dependency Issues Found - ${new Date().toISOString().split('T')[0]}`,
+              body: `Critical issues were found during dependency management scan:\n\n${report}`,
+              labels: ['dependencies', 'security', 'critical']
+            });

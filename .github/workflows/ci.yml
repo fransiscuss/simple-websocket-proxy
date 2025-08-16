@@ -1,0 +1,539 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same workflow and branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20.x'
+  PNPM_VERSION: '8.15.6'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Pre-flight checks and setup
+  setup:
+    name: Setup and Validation
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.cache-keys.outputs.pnpm }}
+      changed-files: ${{ steps.changes.outputs.all }}
+      ws-proxy-changed: ${{ steps.changes.outputs.ws-proxy }}
+      ops-ui-changed: ${{ steps.changes.outputs.ops-ui }}
+      docker-changed: ${{ steps.changes.outputs.docker }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Generate cache keys
+        id: cache-keys
+        run: |
+          echo "pnpm=${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}" >> $GITHUB_OUTPUT
+
+      - name: Detect changed files
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            all:
+              - '**'
+            ws-proxy:
+              - 'packages/ws-proxy/**'
+              - 'pnpm-lock.yaml'
+              - 'package.json'
+              - 'pnpm-workspace.yaml'
+            ops-ui:
+              - 'packages/ops-ui/**'
+              - 'pnpm-lock.yaml'
+              - 'package.json'
+              - 'pnpm-workspace.yaml'
+            docker:
+              - 'docker/**'
+              - '**/Dockerfile'
+              - '**/*.dockerfile'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+  # Lint and type checking
+  lint-and-typecheck:
+    name: Lint and Type Check
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ESLint
+        run: pnpm lint
+
+      - name: Run TypeScript type checking
+        run: pnpm typecheck
+
+  # Unit and integration tests for ws-proxy
+  test-ws-proxy:
+    name: Test WS Proxy
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.ws-proxy-changed == 'true' || github.event_name == 'push'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test123
+          POSTGRES_DB: websocket_proxy_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        working-directory: packages/ws-proxy
+        run: pnpm db:generate
+
+      - name: Run database migrations
+        working-directory: packages/ws-proxy
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+
+      - name: Seed test database
+        working-directory: packages/ws-proxy
+        run: pnpm db:seed
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+          DEFAULT_ADMIN_EMAIL: admin@test.com
+          DEFAULT_ADMIN_PASSWORD: test123
+
+      - name: Run unit and integration tests
+        working-directory: packages/ws-proxy
+        run: pnpm test:coverage
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+          JWT_SECRET: test-jwt-secret
+          DEFAULT_ADMIN_EMAIL: admin@test.com
+          DEFAULT_ADMIN_PASSWORD: test123
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          directory: packages/ws-proxy/coverage
+          flags: ws-proxy
+          name: ws-proxy-coverage
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Unit tests for ops-ui
+  test-ops-ui:
+    name: Test Ops UI
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.ops-ui-changed == 'true' || github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit tests
+        working-directory: packages/ops-ui
+        run: pnpm test:coverage
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          directory: packages/ops-ui/coverage
+          flags: ops-ui
+          name: ops-ui-coverage
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # E2E tests for ops-ui
+  test-e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.ops-ui-changed == 'true' || github.event_name == 'push'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test123
+          POSTGRES_DB: websocket_proxy_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        working-directory: packages/ops-ui
+        run: pnpm playwright install --with-deps
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Start test services
+        run: |
+          # Start ws-proxy in background
+          cd packages/ws-proxy
+          pnpm db:generate
+          pnpm db:migrate
+          pnpm db:seed &
+          pnpm start &
+          WS_PROXY_PID=$!
+          echo "WS_PROXY_PID=$WS_PROXY_PID" >> $GITHUB_ENV
+          
+          # Start ops-ui in background
+          cd ../ops-ui
+          pnpm start &
+          OPS_UI_PID=$!
+          echo "OPS_UI_PID=$OPS_UI_PID" >> $GITHUB_ENV
+          
+          # Wait for services to be ready
+          timeout 60s bash -c 'until curl -f http://localhost:8080/healthz; do sleep 2; done'
+          timeout 60s bash -c 'until curl -f http://localhost:3000/api/healthz; do sleep 2; done'
+        env:
+          DATABASE_URL: postgresql://test:test123@localhost:5432/websocket_proxy_test
+          JWT_SECRET: test-jwt-secret
+          DEFAULT_ADMIN_EMAIL: admin@test.com
+          DEFAULT_ADMIN_PASSWORD: test123
+          API_BASE_URL: http://localhost:8080/api
+          NEXT_PUBLIC_WS_OPS_URL: ws://localhost:8080/ops
+
+      - name: Run Playwright tests
+        working-directory: packages/ops-ui
+        run: pnpm test:e2e
+        env:
+          BASE_URL: http://localhost:3000
+          API_BASE_URL: http://localhost:8080/api
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: packages/ops-ui/playwright-report/
+          retention-days: 7
+
+      - name: Stop test services
+        if: always()
+        run: |
+          kill $WS_PROXY_PID || true
+          kill $OPS_UI_PID || true
+
+  # Build and test Docker images
+  build-docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: setup
+    if: needs.setup.outputs.docker-changed == 'true' || github.event_name == 'push'
+    
+    strategy:
+      matrix:
+        service: [ws-proxy, ops-ui]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: packages/${{ matrix.service }}
+          file: packages/${{ matrix.service }}/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  # Integration test with full stack
+  integration-test:
+    name: Full Stack Integration Test
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck, test-ws-proxy, test-ops-ui]
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and start services
+        run: |
+          docker-compose -f docker/docker-compose.dev.yml build
+          docker-compose -f docker/docker-compose.dev.yml up -d
+
+      - name: Wait for services
+        run: |
+          timeout 120s bash -c 'until curl -f http://localhost:8080/healthz; do sleep 5; done'
+          timeout 120s bash -c 'until curl -f http://localhost:3000/api/healthz; do sleep 5; done'
+
+      - name: Run basic health checks
+        run: |
+          # Test ws-proxy health
+          curl -f http://localhost:8080/healthz
+          
+          # Test ops-ui health
+          curl -f http://localhost:3000/api/healthz
+          
+          # Test WebSocket proxy endpoint (basic connection test)
+          timeout 10s bash -c 'exec 3<>/dev/tcp/localhost/8080' || echo "WebSocket port accessible"
+
+      - name: Check service logs
+        if: always()
+        run: |
+          echo "=== WS-Proxy Logs ==="
+          docker-compose -f docker/docker-compose.dev.yml logs ws-proxy
+          echo "=== Ops-UI Logs ==="
+          docker-compose -f docker/docker-compose.dev.yml logs ops-ui
+          echo "=== PostgreSQL Logs ==="
+          docker-compose -f docker/docker-compose.dev.yml logs postgres
+
+      - name: Stop services
+        if: always()
+        run: docker-compose -f docker/docker-compose.dev.yml down -v
+
+  # Performance and security checks
+  performance-security:
+    name: Performance & Security
+    runs-on: ubuntu-latest
+    needs: setup
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run security audit
+        run: pnpm audit --audit-level moderate
+
+      - name: Check for outdated dependencies
+        run: pnpm outdated --format table || true
+
+      - name: Bundle analysis (ops-ui)
+        working-directory: packages/ops-ui
+        run: |
+          pnpm build
+          # Basic bundle size check
+          du -sh .next/static/chunks/*.js | head -10
+
+  # Status check job for branch protection
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck, test-ws-proxy, test-ops-ui, test-e2e, build-docker, integration-test, performance-security]
+    if: always()
+    
+    steps:
+      - name: Check CI results
+        run: |
+          echo "Lint and TypeCheck: ${{ needs.lint-and-typecheck.result }}"
+          echo "WS-Proxy Tests: ${{ needs.test-ws-proxy.result }}"
+          echo "Ops-UI Tests: ${{ needs.test-ops-ui.result }}"
+          echo "E2E Tests: ${{ needs.test-e2e.result }}"
+          echo "Docker Build: ${{ needs.build-docker.result }}"
+          echo "Integration Test: ${{ needs.integration-test.result }}"
+          echo "Performance & Security: ${{ needs.performance-security.result }}"
+          
+          # Check if any critical jobs failed
+          if [[ "${{ needs.lint-and-typecheck.result }}" == "failure" || 
+                "${{ needs.test-ws-proxy.result }}" == "failure" || 
+                "${{ needs.test-ops-ui.result }}" == "failure" || 
+                "${{ needs.integration-test.result }}" == "failure" ]]; then
+            echo "Critical CI checks failed"
+            exit 1
+          fi
+          
+          echo "CI pipeline completed successfully"

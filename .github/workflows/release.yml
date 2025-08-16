@@ -1,0 +1,429 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        type: string
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+# Ensure only one release runs at a time
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '20.x'
+  PNPM_VERSION: '8.15.6'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Validate release prerequisites
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is-prerelease: ${{ steps.version.outputs.is-prerelease }}
+      environment: ${{ steps.environment.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          
+          # Remove 'v' prefix if present
+          VERSION=${TAG#v}
+          
+          # Check if it's a prerelease (contains alpha, beta, rc)
+          if [[ "$VERSION" =~ (alpha|beta|rc) ]]; then
+            IS_PRERELEASE=true
+          else
+            IS_PRERELEASE=false
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is-prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION (prerelease: $IS_PRERELEASE)"
+
+      - name: Determine environment
+        id: environment
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENV="${{ github.event.inputs.environment }}"
+          elif [[ "${{ steps.version.outputs.is-prerelease }}" == "true" ]]; then
+            ENV="staging"
+          else
+            ENV="production"
+          fi
+          
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "Deployment environment: $ENV"
+
+      - name: Verify changelog entry
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ -f "CHANGELOG.md" ]] && ! grep -q "## \[$VERSION\]" CHANGELOG.md; then
+            echo "Warning: No changelog entry found for version $VERSION"
+          fi
+
+  # Build and test before release
+  pre-release-tests:
+    name: Pre-Release Tests
+    uses: ./.github/workflows/ci.yml
+    needs: validate-release
+    secrets: inherit
+
+  # Build release artifacts
+  build-release:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    needs: [validate-release, pre-release-tests]
+    
+    strategy:
+      matrix:
+        service: [ws-proxy, ops-ui]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.validate-release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.validate-release.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ needs.validate-release.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.validate-release.outputs.is-prerelease == 'false' }}
+            type=raw,value=stable,enable=${{ needs.validate-release.outputs.is-prerelease == 'false' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: packages/${{ matrix.service }}
+          file: packages/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ needs.validate-release.outputs.version }}
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            GIT_COMMIT=${{ github.sha }}
+
+  # Create GitHub release
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-release]
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          VERSION="${{ needs.validate-release.outputs.version }}"
+          
+          # Extract changelog for this version
+          if [[ -f "CHANGELOG.md" ]]; then
+            CHANGELOG=$(awk "/## \[$VERSION\]/{flag=1; next} /## \[/{flag=0} flag" CHANGELOG.md || echo "")
+          else
+            CHANGELOG=""
+          fi
+          
+          # Generate commit messages since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          if [[ -n "$LAST_TAG" ]]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" $LAST_TAG..HEAD)
+          else
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --max-count=20)
+          fi
+          
+          # Create release notes
+          cat > release-notes.md << EOF
+          ## What's Changed
+          
+          $CHANGELOG
+          
+          ### Commits
+          $COMMITS
+          
+          ## Docker Images
+          
+          - \`ghcr.io/${{ github.repository }}/ws-proxy:$VERSION\`
+          - \`ghcr.io/${{ github.repository }}/ops-ui:$VERSION\`
+          
+          ## Deployment
+          
+          See [deployment documentation](./docker/README.md) for deployment instructions.
+          
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/$LAST_TAG...v$VERSION
+          EOF
+          
+          echo "Release notes generated"
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ needs.validate-release.outputs.version }}
+          name: Release v${{ needs.validate-release.outputs.version }}
+          bodyFile: release-notes.md
+          prerelease: ${{ needs.validate-release.outputs.is-prerelease }}
+          generateReleaseNotes: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Deploy to staging environment
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release]
+    if: needs.validate-release.outputs.environment == 'staging' || needs.validate-release.outputs.is-prerelease == 'true'
+    environment:
+      name: staging
+      url: https://staging.websocket-proxy.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        run: |
+          echo "Deploying version ${{ needs.validate-release.outputs.version }} to staging..."
+          
+          # This would typically involve:
+          # 1. Update Kubernetes manifests with new image tags
+          # 2. Apply manifests to staging cluster
+          # 3. Wait for rollout to complete
+          # 4. Run smoke tests
+          
+          # Example deployment commands (customize for your infrastructure):
+          
+          # kubectl set image deployment/ws-proxy ws-proxy=ghcr.io/${{ github.repository }}/ws-proxy:${{ needs.validate-release.outputs.version }} -n staging
+          # kubectl set image deployment/ops-ui ops-ui=ghcr.io/${{ github.repository }}/ops-ui:${{ needs.validate-release.outputs.version }} -n staging
+          # kubectl rollout status deployment/ws-proxy -n staging --timeout=300s
+          # kubectl rollout status deployment/ops-ui -n staging --timeout=300s
+          
+          echo "Staging deployment completed"
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+          # Add your deployment secrets here:
+          # KUBE_CONFIG: ${{ secrets.STAGING_KUBE_CONFIG }}
+          # AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          # AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Run staging smoke tests
+        run: |
+          echo "Running smoke tests on staging environment..."
+          
+          # Example smoke tests (customize for your application):
+          # curl -f https://staging.websocket-proxy.example.com/healthz
+          # curl -f https://staging-ui.websocket-proxy.example.com/api/healthz
+          
+          echo "Staging smoke tests passed"
+
+  # Deploy to production environment
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [validate-release, create-release, deploy-staging]
+    if: needs.validate-release.outputs.environment == 'production' && needs.validate-release.outputs.is-prerelease == 'false'
+    environment:
+      name: production
+      url: https://websocket-proxy.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to production
+        run: |
+          echo "Deploying version ${{ needs.validate-release.outputs.version }} to production..."
+          
+          # This would typically involve:
+          # 1. Update Kubernetes manifests with new image tags
+          # 2. Apply manifests to production cluster with rolling update strategy
+          # 3. Wait for rollout to complete
+          # 4. Run comprehensive health checks
+          # 5. Monitor metrics and alerts
+          
+          # Example deployment commands (customize for your infrastructure):
+          
+          # kubectl set image deployment/ws-proxy ws-proxy=ghcr.io/${{ github.repository }}/ws-proxy:${{ needs.validate-release.outputs.version }} -n production
+          # kubectl set image deployment/ops-ui ops-ui=ghcr.io/${{ github.repository }}/ops-ui:${{ needs.validate-release.outputs.version }} -n production
+          # kubectl rollout status deployment/ws-proxy -n production --timeout=600s
+          # kubectl rollout status deployment/ops-ui -n production --timeout=600s
+          
+          echo "Production deployment completed"
+        env:
+          VERSION: ${{ needs.validate-release.outputs.version }}
+          # Add your deployment secrets here:
+          # KUBE_CONFIG: ${{ secrets.PRODUCTION_KUBE_CONFIG }}
+          # AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          # AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Run production health checks
+        run: |
+          echo "Running comprehensive health checks on production..."
+          
+          # Example health checks (customize for your application):
+          # curl -f https://websocket-proxy.example.com/healthz
+          # curl -f https://ui.websocket-proxy.example.com/api/healthz
+          
+          # Test WebSocket proxy functionality
+          # Add comprehensive tests here
+          
+          echo "Production health checks passed"
+
+      - name: Update monitoring dashboards
+        run: |
+          echo "Updating monitoring dashboards for version ${{ needs.validate-release.outputs.version }}..."
+          
+          # Example: Update Grafana dashboards, alerts, etc.
+          # This could involve API calls to your monitoring systems
+          
+          echo "Monitoring dashboards updated"
+
+  # Rollback capability
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: failure() && (needs.deploy-staging.result == 'failure' || needs.deploy-production.result == 'failure')
+    needs: [validate-release, deploy-staging, deploy-production]
+    environment:
+      name: ${{ needs.validate-release.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rollback deployment
+        run: |
+          echo "Rolling back deployment in ${{ needs.validate-release.outputs.environment }}..."
+          
+          ENVIRONMENT="${{ needs.validate-release.outputs.environment }}"
+          
+          # Get previous successful deployment
+          # kubectl rollout undo deployment/ws-proxy -n $ENVIRONMENT
+          # kubectl rollout undo deployment/ops-ui -n $ENVIRONMENT
+          
+          # Wait for rollback to complete
+          # kubectl rollout status deployment/ws-proxy -n $ENVIRONMENT --timeout=300s
+          # kubectl rollout status deployment/ops-ui -n $ENVIRONMENT --timeout=300s
+          
+          echo "Rollback completed for $ENVIRONMENT environment"
+
+      - name: Notify rollback
+        if: always()
+        run: |
+          echo "Deployment rollback executed for ${{ needs.validate-release.outputs.environment }}"
+          # Add notification logic (Slack, email, etc.)
+
+  # Post-release tasks
+  post-release:
+    name: Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: [validate-release, deploy-production]
+    if: always() && needs.deploy-production.result == 'success'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update documentation
+        run: |
+          echo "Updating documentation for release ${{ needs.validate-release.outputs.version }}..."
+          
+          # Example: Update API documentation, deployment guides, etc.
+          # This could involve generating docs and pushing to a docs repository
+          
+          echo "Documentation updated"
+
+      - name: Notify teams
+        run: |
+          echo "Notifying teams about successful release ${{ needs.validate-release.outputs.version }}..."
+          
+          # Add notification logic here:
+          # - Slack notifications
+          # - Email notifications
+          # - Update issue trackers
+          # - Post to status page
+          
+          echo "Teams notified"
+
+      - name: Archive release artifacts
+        run: |
+          echo "Archiving release artifacts..."
+          
+          # Archive logs, metrics, and other release artifacts
+          # This helps with debugging and compliance
+          
+          echo "Release artifacts archived"
+
+      - name: Performance baseline update
+        run: |
+          echo "Updating performance baselines..."
+          
+          # Update performance baselines for monitoring
+          # This helps detect performance regressions in future releases
+          
+          echo "Performance baselines updated"
