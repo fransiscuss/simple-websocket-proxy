@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Router } from 'express';
 import { endpointsRouter } from '../../routes/endpoints';
 import { createMockPrismaClient } from '../mocks/prisma';
-import { createAuthenticatedRequest, createMockResponse, createMockNext } from '../mocks/express';
+import { createAuthenticatedRequest, createMockResponse } from '../mocks/express';
 import { generateTestData } from '../helpers/test-setup';
 
 // Mock prisma first

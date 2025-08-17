@@ -89,7 +89,7 @@ export class ProxyError extends Error {
     message: string,
     public code: string,
     public statusCode: number = 500,
-    public details?: any
+    public details?: Record<string, unknown>
   ) {
     super(message);
     this.name = 'ProxyError';
@@ -188,7 +188,7 @@ export interface LogContext {
   targetUrl?: string;
   requestId?: string;
   userId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 // Rate limiting

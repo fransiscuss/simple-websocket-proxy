@@ -77,7 +77,7 @@ class WebSocketProxyServer {
       const startTime = process.hrtime();
       const requestId = Math.random().toString(36).substring(7);
       
-      (req.headers as any)['x-request-id'] = requestId;
+      (req.headers as Record<string, unknown>)['x-request-id'] = requestId;
       
       res.on('finish', () => {
         const [seconds, nanoseconds] = process.hrtime(startTime);
@@ -154,7 +154,7 @@ class WebSocketProxyServer {
     });
 
     // Error handler
-    this.app.use((error: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    this.app.use((error: Error, req: express.Request, res: express.Response) => {
       logError(this.logger, error, 'Unhandled request error', {
         requestId: Array.isArray(req.headers['x-request-id']) ? req.headers['x-request-id'][0] : req.headers['x-request-id'],
         method: req.method,
@@ -254,12 +254,12 @@ class WebSocketProxyServer {
     };
   }
 
-  private getClientIP(req: express.Request | any): string {
+  private getClientIP(req: express.Request | import('http').IncomingMessage): string {
     const xForwardedFor = req.headers['x-forwarded-for'];
     if (xForwardedFor) {
       return Array.isArray(xForwardedFor) ? xForwardedFor[0] : xForwardedFor.split(',')[0];
     }
-    return req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown';
+    return req.socket?.remoteAddress || (req as any).connection?.remoteAddress || 'unknown';
   }
 
   private setupGracefulShutdown(): void {

@@ -214,7 +214,7 @@ describe('Endpoints API Integration Tests', () => {
 
     it('should require authentication', async () => {
       // Mock auth middleware to return 401
-      mockAuthenticateToken.mockImplementationOnce((req, res, next) => {
+      mockAuthenticateToken.mockImplementationOnce((req, res) => {
         res.status(401).json({ error: 'Unauthorized' });
       });
 

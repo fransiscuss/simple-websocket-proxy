@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import jwt from 'jsonwebtoken';
 import { setupPrismaMocks, createMockPrismaClient } from '../mocks/prisma';
 
 // Global test setup
@@ -18,19 +19,19 @@ export const setupTestEnvironment = () => {
 };
 
 // Helper to create mock logger
-export const createMockLogger = () => ({
+export const createMockLogger = (): any => ({
   info: vi.fn(),
   debug: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
   fatal: vi.fn(),
   trace: vi.fn(),
-  child: vi.fn(() => createMockLogger()),
+  child: vi.fn((): any => createMockLogger()),
 });
 
 // Helper to generate test data
 export const generateTestData = {
-  user: (overrides: any = {}) => ({
+  user: (overrides: Record<string, unknown> = {}) => ({
     id: 'user-123',
     email: 'test@example.com',
     passwordHash: '$2a$10$hashedpassword',
@@ -40,7 +41,7 @@ export const generateTestData = {
     ...overrides,
   }),
 
-  endpoint: (overrides: any = {}) => ({
+  endpoint: (overrides: Record<string, unknown> = {}) => ({
     id: 'endpoint-123',
     name: 'Test Endpoint',
     targetUrl: 'wss://example.com/ws',
@@ -59,7 +60,7 @@ export const generateTestData = {
     ...overrides,
   }),
 
-  session: (overrides: any = {}) => ({
+  session: (overrides: Record<string, unknown> = {}) => ({
     id: 'session-123',
     endpointId: 'endpoint-123',
     state: 'ACTIVE',
@@ -72,7 +73,7 @@ export const generateTestData = {
     ...overrides,
   }),
 
-  trafficSample: (overrides: any = {}) => ({
+  trafficSample: (overrides: Record<string, unknown> = {}) => ({
     id: 'sample-123',
     sessionId: 'session-123',
     endpointId: 'endpoint-123',
@@ -83,7 +84,7 @@ export const generateTestData = {
     ...overrides,
   }),
 
-  auditLog: (overrides: any = {}) => ({
+  auditLog: (overrides: Record<string, unknown> = {}) => ({
     id: 'audit-123',
     action: 'CREATE_ENDPOINT',
     entityType: 'ENDPOINT',
@@ -95,8 +96,7 @@ export const generateTestData = {
 };
 
 // Helper to generate JWT tokens for testing
-export const generateTestJWT = (payload: any = {}) => {
-  const jwt = require('jsonwebtoken');
+export const generateTestJWT = (payload: Record<string, unknown> = {}) => {
   return jwt.sign(
     {
       userId: 'user-123',
@@ -104,7 +104,7 @@ export const generateTestJWT = (payload: any = {}) => {
       role: 'ADMIN',
       ...payload,
     },
-    process.env.JWT_SECRET,
+    process.env.JWT_SECRET || 'test-secret',
     { expiresIn: '1h' }
   );
 };
@@ -113,7 +113,7 @@ export const generateTestJWT = (payload: any = {}) => {
 export const waitFor = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Helper to create test request objects
-export const createTestRequest = (overrides: any = {}) => ({
+export const createTestRequest = (overrides: Record<string, unknown> = {}) => ({
   body: {},
   params: {},
   query: {},
@@ -124,7 +124,11 @@ export const createTestRequest = (overrides: any = {}) => ({
 
 // Helper to create test response objects
 export const createTestResponse = () => {
-  const res: any = {
+  const res: {
+    status: ReturnType<typeof vi.fn>;
+    json: ReturnType<typeof vi.fn>;
+    send: ReturnType<typeof vi.fn>;
+  } = {
     status: vi.fn().mockReturnThis(),
     json: vi.fn().mockReturnThis(),
     send: vi.fn().mockReturnThis(),

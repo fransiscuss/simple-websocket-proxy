@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { Router } from 'express';
-import { authRouter } from '../../routes/auth';
 import { createMockPrismaClient } from '../mocks/prisma';
 import { generateTestData } from '../helpers/test-setup';
 
@@ -63,7 +61,7 @@ const executeRoute = async (method: string, path: string, body?: any, headers?: 
   vi.resetModules();
   
   // Re-import to get the router with mocked Router
-  const { authRouter: testRouter } = await import('../../routes/auth');
+  await import('../../routes/auth');
   
   // The router should have registered routes during import
   // Find the matching route
@@ -388,7 +386,7 @@ describe('Auth Routes', () => {
       vi.resetModules();
       
       // Import the router to trigger route registration
-      const { authRouter: testRouter } = await import('../../routes/auth');
+      await import('../../routes/auth');
 
       // Check that the POST /login route was registered
       const loginRoute = routes.find(r => r.method === 'POST' && r.path === '/login');

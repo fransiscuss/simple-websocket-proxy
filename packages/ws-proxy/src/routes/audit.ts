@@ -37,7 +37,7 @@ router.get('/', async (req, res) => {
     const { page, limit, action, entityType, entityId, startDate, endDate } = auditQuerySchema.parse(req.query);
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Record<string, any> = {};
     
     if (action) {
       where.action = { contains: action, mode: 'insensitive' };

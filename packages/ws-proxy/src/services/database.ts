@@ -1,4 +1,4 @@
-import { PrismaClient, Endpoint, LiveSession, TrafficSample, SessionState, Direction, Prisma } from '@prisma/client';
+import { PrismaClient, Endpoint, LiveSession, SessionState } from '@prisma/client';
 import { EndpointConfig, EndpointLimits, EndpointSampling, SessionMetrics, SessionUpdate, TrafficSample as TrafficSampleType } from '../types';
 import { loggers, logDatabaseOperation, logError } from '../utils/logger';
 

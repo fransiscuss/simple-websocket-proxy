@@ -8,7 +8,7 @@ import { auditRouter } from '../../routes/audit';
 import { generateTestJWT, generateTestData } from './test-setup';
 
 // Create a test application for integration tests
-export const createTestApp = () => {
+export const createTestApp = (): express.Application => {
   const app = express();
   
   // Setup middleware with error handling for malformed JSON
@@ -16,7 +16,7 @@ export const createTestApp = () => {
   app.use(express.urlencoded({ extended: true }));
   
   // Handle JSON parsing errors
-  app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  app.use((error: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (error instanceof SyntaxError && 'body' in error) {
       return res.status(400).json({
         error: 'Bad Request',
@@ -97,7 +97,7 @@ export const createTestApp = () => {
   });
   
   // Error handler
-  app.use((error: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  app.use((error: Error, req: express.Request, res: express.Response) => {
     res.status(500).json({
       error: 'Internal Server Error',
       message: 'An unexpected error occurred'
@@ -108,7 +108,7 @@ export const createTestApp = () => {
 };
 
 // Helper to create authenticated request headers
-export const createAuthHeaders = (userOverrides: any = {}) => {
+export const createAuthHeaders = (userOverrides: Record<string, unknown> = {}) => {
   const token = generateTestJWT(userOverrides);
   return {
     'Authorization': `Bearer ${token}`,
@@ -142,10 +142,10 @@ export interface IntegrationTestHelpers {
   request: request.SuperTest<request.Test>;
   authHeaders: () => Record<string, string>;
   unAuthHeaders: () => Record<string, string>;
-  createUser: (overrides?: any) => any;
-  createEndpoint: (overrides?: any) => any;
-  createSession: (overrides?: any) => any;
-  createAuditLog: (overrides?: any) => any;
+  createUser: (overrides?: Record<string, unknown>) => Record<string, unknown>;
+  createEndpoint: (overrides?: Record<string, unknown>) => Record<string, unknown>;
+  createSession: (overrides?: Record<string, unknown>) => Record<string, unknown>;
+  createAuditLog: (overrides?: Record<string, unknown>) => Record<string, unknown>;
 }
 
 // Create integration test helpers

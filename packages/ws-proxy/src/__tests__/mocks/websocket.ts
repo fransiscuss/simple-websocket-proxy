@@ -59,7 +59,7 @@ export class MockWebSocket extends EventEmitter {
 export class MockWebSocketServer extends EventEmitter {
   clients = new Set();
   
-  constructor(options?: any) {
+  constructor() {
     super();
   }
   

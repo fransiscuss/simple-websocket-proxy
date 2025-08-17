@@ -1,5 +1,5 @@
 import { SessionState, Direction } from '@prisma/client';
-import { ProxyConnection, SessionMetrics, TrafficSample, EndpointSampling, RateLimit } from '../types';
+import { ProxyConnection, TrafficSample, EndpointSampling, RateLimit } from '../types';
 import { DatabaseService, getDatabaseService } from './database';
 import { loggers, logError, logMessage } from '../utils/logger';
 

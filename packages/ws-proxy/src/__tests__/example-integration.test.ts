@@ -1,11 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { DatabaseService } from '../services/database';
 import { SessionManager } from '../services/session-manager';
-import { TelemetryService, getTelemetryService } from '../services/telemetry';
+import { TelemetryService } from '../services/telemetry';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
 import { createMockRequest, createMockResponse, createMockNext } from './mocks/express';
 import { MockWebSocket } from './mocks/websocket';
-import { generateTestData } from './helpers/test-setup';
 
 // Mock external dependencies
 vi.mock('@prisma/client', () => ({
@@ -103,7 +102,7 @@ describe('Integration Tests', () => {
 
       // Create a session
       const mockWebSocket = new MockWebSocket();
-      const sessionId = await sessionManager.createSession('endpoint-123', mockWebSocket as any);
+      const sessionId = await sessionManager.createSession('endpoint-123', mockWebSocket as unknown as WebSocket);
       
       expect(sessionId).toBe('session-123');
 
@@ -119,7 +118,7 @@ describe('Integration Tests', () => {
       const mockClient = new MockWebSocket();
       
       // Add client
-      telemetryService.addClient(mockClient as any);
+      telemetryService.addClient(mockClient as unknown as WebSocket);
       expect(telemetryService.getClientCount()).toBe(1);
       
       // Broadcast event
@@ -142,7 +141,7 @@ describe('Integration Tests', () => {
 
   describe('Authentication Integration', () => {
     it('should authenticate and authorize admin users', () => {
-      const jwt = require('jsonwebtoken').default;
+      // Use the existing mocked JWT
       
       // Mock valid JWT verification
       const mockUser = {
@@ -194,7 +193,7 @@ describe('Integration Tests', () => {
       const telemetryService = new TelemetryService();
       
       // Setup mocks
-      const mockPrisma = (sessionManager as any).database.client;
+      const mockPrisma = (sessionManager as unknown as { database: { client: any } }).database.client;
       mockPrisma.liveSession.create.mockResolvedValue({
         id: 'session-123',
         endpointId: 'endpoint-123',
@@ -211,7 +210,7 @@ describe('Integration Tests', () => {
       
       // Create session
       const mockWebSocket = new MockWebSocket();
-      const sessionId = await sessionManager.createSession('endpoint-123', mockWebSocket as any);
+      const sessionId = await sessionManager.createSession('endpoint-123', mockWebSocket as unknown as WebSocket);
       
       // Track message
       const sampling = { enabled: true, sampleRate: 1.0, storeContent: true };
@@ -233,7 +232,7 @@ describe('Integration Tests', () => {
   describe('Error Handling Integration', () => {
     it('should handle database connection failures gracefully', async () => {
       const databaseService = new DatabaseService();
-      const mockPrisma = databaseService.client as any;
+      const mockPrisma = databaseService.client as unknown as { endpoint: { findUnique: ReturnType<typeof vi.fn> } };
       
       // Mock database error
       mockPrisma.endpoint.findUnique.mockRejectedValue(new Error('Connection failed'));
@@ -276,7 +275,7 @@ describe('Integration Tests', () => {
 
     it('should check connection limits', async () => {
       const sessionManager = new SessionManager();
-      const mockPrisma = (sessionManager as any).database.client;
+      const mockPrisma = (sessionManager as unknown as { database: { client: any } }).database.client;
       
       // Mock active connection count
       mockPrisma.liveSession.count.mockResolvedValue(10);
@@ -301,7 +300,7 @@ describe('Integration Tests', () => {
       expect(stats.totalSessions).toBe(0);
       
       // Add sessions and verify stats update
-      const mockPrisma = (sessionManager as any).database.client;
+      const mockPrisma = (sessionManager as unknown as { database: { client: any } }).database.client;
       mockPrisma.liveSession.create.mockResolvedValue({
         id: 'session-1',
         endpointId: 'endpoint-123',
@@ -315,7 +314,7 @@ describe('Integration Tests', () => {
       });
       
       const mockWs1 = new MockWebSocket();
-      const sessionId1 = await sessionManager.createSession('endpoint-123', mockWs1 as any);
+      await sessionManager.createSession('endpoint-123', mockWs1 as unknown as WebSocket);
       
       stats = sessionManager.getStatistics();
       expect(stats.activeConnections).toBe(1);

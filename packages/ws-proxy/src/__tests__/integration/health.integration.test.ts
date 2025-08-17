@@ -400,7 +400,7 @@ describe('Health and Metrics API Integration Tests', () => {
 
     it('should handle high frequency health checks', async () => {
       // Simulate monitoring system making frequent health checks
-      const promises = Array.from({ length: 20 }, (_, i) =>
+      const promises = Array.from({ length: 20 }, () =>
         request.get('/healthz').expect(200)
       );
 

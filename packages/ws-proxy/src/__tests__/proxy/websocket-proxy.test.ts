@@ -5,11 +5,7 @@ import { MockWebSocket } from '../mocks/websocket';
 import { mockDatabaseService } from '../mocks/prisma';
 import { generateTestData } from '../helpers/test-setup';
 import {
-  EndpointNotFoundError,
-  EndpointDisabledError,
-  ConnectionLimitExceededError,
   MessageTooLargeError,
-  TargetConnectionError,
 } from '../../types';
 
 // Mock dependencies
@@ -51,8 +47,8 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 // Mock WebSocket constructor with inline implementation
-vi.mock('ws', () => {
-  const { EventEmitter } = require('events');
+vi.mock('ws', async () => {
+  const { EventEmitter } = await import('events');
   
   class MockWS extends EventEmitter {
     public readyState = 1; // OPEN

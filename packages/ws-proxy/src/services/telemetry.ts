@@ -7,7 +7,7 @@ const logger = createLogger({ name: 'telemetry' });
 export interface TelemetryEvent {
   type: string;
   timestamp: string;
-  data: any;
+  data: Record<string, unknown>;
 }
 
 export interface SessionStartedEvent extends TelemetryEvent {
@@ -73,7 +73,7 @@ export interface SampledPayloadEvent extends TelemetryEvent {
 
 export interface ControlCommand {
   type: string;
-  data: any;
+  data: Record<string, unknown>;
 }
 
 export interface SessionKillCommand extends ControlCommand {

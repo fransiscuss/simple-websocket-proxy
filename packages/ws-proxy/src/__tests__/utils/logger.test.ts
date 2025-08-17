@@ -51,7 +51,7 @@ vi.mock('pino', () => {
 });
 
 describe('Logger Utils', () => {
-  let mockLogger: any;
+  let mockLogger: ReturnType<typeof vi.fn>;
   
   beforeEach(() => {
     vi.clearAllMocks();
@@ -88,7 +88,7 @@ describe('Logger Utils', () => {
 
   describe('createLogger', () => {
     it('should create logger with default options', () => {
-      const logger = createLogger({});
+      createLogger({});
       
       expect(pino).toHaveBeenCalledWith({
         name: 'ws-proxy',
@@ -106,7 +106,7 @@ describe('Logger Utils', () => {
     });
 
     it('should create logger with custom options', () => {
-      const logger = createLogger({
+      createLogger({
         level: 'debug',
         name: 'test-logger',
       });
@@ -122,7 +122,7 @@ describe('Logger Utils', () => {
     it('should enable pretty printing in development', () => {
       process.env.NODE_ENV = 'development';
       
-      const logger = createLogger({ pretty: true });
+      createLogger({ pretty: true });
       
       expect(pino.destination).toHaveBeenCalled();
       expect(pino.transport).toHaveBeenCalledWith({
@@ -138,7 +138,7 @@ describe('Logger Utils', () => {
     it('should not enable pretty printing in production', () => {
       process.env.NODE_ENV = 'production';
       
-      const logger = createLogger({ pretty: true });
+      createLogger({ pretty: true });
       
       expect(pino.destination).not.toHaveBeenCalled();
       expect(pino.transport).not.toHaveBeenCalled();
@@ -160,7 +160,7 @@ describe('Logger Utils', () => {
       // Clear module cache to force re-initialization
       vi.resetModules();
       
-      const logger = getLogger();
+      getLogger();
       
       expect(pino).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -174,7 +174,7 @@ describe('Logger Utils', () => {
     it('should create child logger with context', () => {
       const context = { sessionId: 'test-session', endpointId: 'test-endpoint' };
       
-      const contextLogger = createContextLogger(context);
+      createContextLogger(context);
       
       expect(mockLogger.child).toHaveBeenCalledWith(context);
     });
@@ -182,7 +182,7 @@ describe('Logger Utils', () => {
 
   describe('loggers', () => {
     it('should create app logger', () => {
-      const logger = loggers.app({ userId: 'test-user' });
+      loggers.app({ userId: 'test-user' });
       
       expect(mockLogger.child).toHaveBeenCalledWith({
         component: 'app',
@@ -191,7 +191,7 @@ describe('Logger Utils', () => {
     });
 
     it('should create server logger', () => {
-      const logger = loggers.server();
+      loggers.server();
       
       expect(mockLogger.child).toHaveBeenCalledWith({
         component: 'server',
@@ -199,7 +199,7 @@ describe('Logger Utils', () => {
     });
 
     it('should create proxy logger', () => {
-      const logger = loggers.proxy({ sessionId: 'test-session' });
+      loggers.proxy({ sessionId: 'test-session' });
       
       expect(mockLogger.child).toHaveBeenCalledWith({
         component: 'proxy',
@@ -208,7 +208,7 @@ describe('Logger Utils', () => {
     });
 
     it('should create database logger', () => {
-      const logger = loggers.database();
+      loggers.database();
       
       expect(mockLogger.child).toHaveBeenCalledWith({
         component: 'database',
@@ -216,7 +216,7 @@ describe('Logger Utils', () => {
     });
 
     it('should create session logger', () => {
-      const logger = loggers.session();
+      loggers.session();
       
       expect(mockLogger.child).toHaveBeenCalledWith({
         component: 'session',
@@ -224,7 +224,7 @@ describe('Logger Utils', () => {
     });
 
     it('should create health logger', () => {
-      const logger = loggers.health();
+      loggers.health();
       
       expect(mockLogger.child).toHaveBeenCalledWith({
         component: 'health',

@@ -125,7 +125,7 @@ export function logConnectionEvent(
   sessionId: string,
   endpointId: string,
   event: 'connect' | 'disconnect' | 'error' | 'target-connect' | 'target-disconnect',
-  details?: any
+  details?: Record<string, unknown>
 ): void {
   const logger = loggers.proxy({ sessionId, endpointId });
   

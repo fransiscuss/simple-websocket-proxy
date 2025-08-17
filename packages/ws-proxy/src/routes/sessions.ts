@@ -30,7 +30,7 @@ router.get('/', async (req, res) => {
     const { page, limit, endpointId, state } = sessionsQuerySchema.parse(req.query);
     const skip = (page - 1) * limit;
 
-    const where: any = {};
+    const where: Record<string, unknown> = {};
     
     if (endpointId) {
       where.endpointId = endpointId;

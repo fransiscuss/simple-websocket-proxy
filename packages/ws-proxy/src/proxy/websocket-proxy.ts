@@ -400,12 +400,10 @@ export class WebSocketProxy {
     });
 
     let statusCode = 500;
-    let errorCode = 'INTERNAL_ERROR';
     let message = 'Internal server error';
 
     if (error instanceof ProxyError) {
       statusCode = error.statusCode;
-      errorCode = error.code;
       message = error.message;
     }
 

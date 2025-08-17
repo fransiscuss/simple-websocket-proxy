@@ -48,7 +48,7 @@ export const createMockResponse = (): Response => {
 
 // Mock Express NextFunction
 export const createMockNext = (): NextFunction => {
-  return vi.fn();
+  return vi.fn() as any;
 };
 
 // Helper to create authenticated request

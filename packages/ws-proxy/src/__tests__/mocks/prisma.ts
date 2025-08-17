@@ -1,5 +1,4 @@
 import { vi } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
 
 // Mock Prisma client
 export const createMockPrismaClient = (): any => {

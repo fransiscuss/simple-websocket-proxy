@@ -157,7 +157,7 @@ describe('TelemetryService', () => {
     });
 
     it('should handle unknown command type', () => {
-      const sendSpy = vi.spyOn(mockClient, 'send');
+      vi.spyOn(mockClient, 'send');
       telemetryService.addClient(mockClient as any);
       
       const command = {
