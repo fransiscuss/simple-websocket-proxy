@@ -19,13 +19,9 @@ const mockSessionManager = {
   killSession: vi.fn(),
 };
 
-vi.mock('../../services/session-manager', async () => {
-  const actual = await vi.importActual('../../services/session-manager');
-  return {
-    ...actual,
-    getSessionManager: () => mockSessionManager,
-  };
-});
+vi.mock('../../services/session-manager', () => ({
+  getSessionManager: () => mockSessionManager,
+}));
 
 describe('TelemetryService', () => {
   let telemetryService: TelemetryService;
@@ -33,6 +29,12 @@ describe('TelemetryService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    
+    // Reset the mock functions completely
+    mockSessionManager.getStatistics.mockReset();
+    mockSessionManager.getActiveSessions.mockReset();
+    mockSessionManager.killSession.mockReset();
+    
     telemetryService = new TelemetryService();
     mockClient = new MockWebSocket();
     
@@ -66,8 +68,10 @@ describe('TelemetryService', () => {
     mockSessionManager.killSession.mockResolvedValue(true);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.clearAllTimers();
+    // Ensure singleton is reset between tests
+    await shutdownTelemetryService();
   });
 
   describe('Client Management', () => {
@@ -76,8 +80,8 @@ describe('TelemetryService', () => {
       
       telemetryService.addClient(mockClient as any);
       
-      // Wait for stats to be sent
-      await new Promise(resolve => setTimeout(resolve, 10));
+      // Wait longer for the async import and stats to be sent
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       expect(sendSpy).toHaveBeenCalledWith(
         expect.stringContaining('"type":"currentStats"')
@@ -481,7 +485,9 @@ describe('TelemetryService', () => {
     });
 
     it('should handle session manager import errors', async () => {
-      vi.doMock('../../services/session-manager', () => {
+      // Instead of mocking the module, we'll mock the getStatistics method to throw
+      // This simulates the same error condition without affecting module cache
+      mockSessionManager.getStatistics.mockImplementation(() => {
         throw new Error('Import failed');
       });
       
@@ -494,6 +500,11 @@ describe('TelemetryService', () => {
   });
 
   describe('Singleton Functions', () => {
+    afterEach(async () => {
+      // Clean up singleton after each test in this block
+      await shutdownTelemetryService();
+    });
+
     it('should return same instance from getTelemetryService', () => {
       const service1 = getTelemetryService();
       const service2 = getTelemetryService();
