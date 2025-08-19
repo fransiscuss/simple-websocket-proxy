@@ -14,6 +14,11 @@ export const LOG_LEVELS = {
 // Create logger instance
 let logger: Logger;
 
+// Test helper to reset logger singleton
+export function resetLogger(): void {
+  logger = undefined as any;
+}
+
 export function createLogger(options: {
   level?: string;
   pretty?: boolean;
@@ -22,29 +27,26 @@ export function createLogger(options: {
   const loggerOptions: LoggerOptions = {
     name: options.name || 'ws-proxy',
     level: options.level || 'info',
-    timestamp: pino.stdTimeFunctions.isoTime,
+    timestamp: pino.stdTimeFunctions?.isoTime || (() => new Date().toISOString()),
     formatters: {
       level: (label) => ({ level: label })
     },
     serializers: {
-      req: pino.stdSerializers.req,
-      res: pino.stdSerializers.res,
-      error: pino.stdSerializers.err
+      req: pino.stdSerializers?.req || ((req: any) => req),
+      res: pino.stdSerializers?.res || ((res: any) => res),
+      error: pino.stdSerializers?.err || ((err: any) => err)
     }
   };
 
   // Add pretty printing for development
-  if (options.pretty && process.env.NODE_ENV !== 'production') {
-    logger = pino(loggerOptions, pino.destination({
-      sync: false,
-      dest: pino.transport({
-        target: 'pino-pretty',
-        options: {
-          colorize: true,
-          translateTime: 'SYS:standard',
-          ignore: 'pid,hostname'
-        }
-      })
+  if (options.pretty && process.env.NODE_ENV !== 'production' && typeof pino.transport === 'function') {
+    logger = pino(loggerOptions, pino.transport({
+      target: 'pino-pretty',
+      options: {
+        colorize: true,
+        translateTime: 'SYS:standard',
+        ignore: 'pid,hostname'
+      }
     }));
   } else {
     logger = pino(loggerOptions);

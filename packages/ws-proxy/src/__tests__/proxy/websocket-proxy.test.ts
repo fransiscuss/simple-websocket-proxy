@@ -106,6 +106,12 @@ vi.mock('ws', async () => {
     return ws;
   });
   
+  // Expose constants on the mock constructor function
+  MockWebSocketClass.CONNECTING = 0;
+  MockWebSocketClass.OPEN = 1;
+  MockWebSocketClass.CLOSING = 2;
+  MockWebSocketClass.CLOSED = 3;
+  
   return {
     default: MockWebSocketClass,
     __esModule: true,
@@ -125,6 +131,8 @@ describe('WebSocketProxy', () => {
     vi.clearAllMocks();
     proxy = new WebSocketProxy();
     mockClientWs = new MockWebSocket();
+    // Ensure client WebSocket starts in OPEN state for error handling tests
+    mockClientWs.readyState = 1; // WebSocket.OPEN
     
     mockRequest = {
       headers: {
@@ -238,7 +246,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle target connection timeout', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
       
       // Don't emit 'open' event to simulate timeout
       vi.useFakeTimers();
@@ -256,7 +265,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle target connection error', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       const connectionPromise = proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
       
@@ -273,7 +283,8 @@ describe('WebSocketProxy', () => {
       mockRequest.headers['x-forwarded-for'] = '203.0.113.195, 70.41.3.18, 150.172.238.178';
       
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -286,7 +297,8 @@ describe('WebSocketProxy', () => {
       delete (mockRequest.socket as any).remoteAddress;
       
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -298,7 +310,8 @@ describe('WebSocketProxy', () => {
   describe('Message Handling', () => {
     beforeEach(async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
       
       // Set up connection
       mockSessionManager.getSession.mockReturnValue({
@@ -461,7 +474,8 @@ describe('WebSocketProxy', () => {
   describe('Connection Lifecycle', () => {
     it('should handle client disconnect', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -472,7 +486,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle client error', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -483,7 +498,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle target disconnect', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -495,7 +511,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle target error', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -506,7 +523,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle pong from client', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -523,7 +541,8 @@ describe('WebSocketProxy', () => {
       vi.useFakeTimers();
       
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -540,7 +559,8 @@ describe('WebSocketProxy', () => {
       vi.useFakeTimers();
       
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -630,7 +650,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle message forwarding errors', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -646,7 +667,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle tracking errors gracefully', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -688,7 +710,8 @@ describe('WebSocketProxy', () => {
       mockSessionManager.getSession.mockReturnValue(null);
 
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 
@@ -698,7 +721,8 @@ describe('WebSocketProxy', () => {
 
     it('should handle empty message content', async () => {
       const targetWs = new MockWebSocket();
-      MockWebSocketClass.mockReturnValue(targetWs);
+      const WebSocketMock = vi.mocked(await import('ws')).default;
+      WebSocketMock.mockReturnValue(targetWs as any);
 
       await proxy.handleConnection(mockClientWs as any, mockRequest, 'endpoint-123');
 

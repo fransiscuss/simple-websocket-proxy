@@ -14,11 +14,13 @@ import {
   logDatabaseOperation,
   logShutdown,
   LOG_LEVELS,
+  resetLogger,
 } from '../../utils/logger';
 
 // Mock pino
 vi.mock('pino', () => {
   const mockIsoTime = vi.fn(() => '2023-01-01T00:00:00.000Z');
+  const mockTransport = vi.fn();
   
   return {
     default: vi.fn(() => ({
@@ -46,7 +48,7 @@ vi.mock('pino', () => {
       err: vi.fn(),
     },
     destination: vi.fn(),
-    transport: vi.fn(),
+    transport: mockTransport,
   };
 });
 
@@ -55,6 +57,7 @@ describe('Logger Utils', () => {
   
   beforeEach(() => {
     vi.clearAllMocks();
+    resetLogger(); // Reset the singleton logger
     mockLogger = {
       info: vi.fn(),
       debug: vi.fn(),
@@ -65,6 +68,11 @@ describe('Logger Utils', () => {
       child: vi.fn(() => mockLogger),
     };
     vi.mocked(pino).mockReturnValue(mockLogger);
+    
+    // Ensure transport is properly mocked
+    if (!pino.transport) {
+      (pino as any).transport = vi.fn();
+    }
   });
 
   afterEach(() => {
@@ -124,7 +132,6 @@ describe('Logger Utils', () => {
       
       createLogger({ pretty: true });
       
-      expect(pino.destination).toHaveBeenCalled();
       expect(pino.transport).toHaveBeenCalledWith({
         target: 'pino-pretty',
         options: {
@@ -140,7 +147,6 @@ describe('Logger Utils', () => {
       
       createLogger({ pretty: true });
       
-      expect(pino.destination).not.toHaveBeenCalled();
       expect(pino.transport).not.toHaveBeenCalled();
     });
   });
@@ -157,15 +163,17 @@ describe('Logger Utils', () => {
       process.env.LOG_LEVEL = 'debug';
       process.env.NODE_ENV = 'development';
       
-      // Clear module cache to force re-initialization
-      vi.resetModules();
+      // Reset logger to force re-initialization
+      resetLogger();
       
       getLogger();
       
       expect(pino).toHaveBeenCalledWith(
         expect.objectContaining({
           level: 'debug',
-        })
+          name: 'ws-proxy',
+        }),
+        undefined
       );
     });
   });

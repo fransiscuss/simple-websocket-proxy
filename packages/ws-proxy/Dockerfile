@@ -1,15 +1,17 @@
 FROM node:20-alpine AS builder
 
+RUN npm install -g pnpm@8.0.0
+
 WORKDIR /app
 
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml ./
 COPY tsconfig.json ./
-RUN npm ci
+RUN pnpm install
 
 COPY src/ src/
 COPY prisma/ prisma/
-RUN npm run db:generate
-RUN npm run build
+RUN pnpm run db:generate
+RUN pnpm run build
 
 FROM node:20-alpine AS runtime
 
@@ -30,4 +32,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1
 
-CMD ["npm", "start"]
+CMD ["node", "dist/index.js"]
