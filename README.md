@@ -1,6 +1,6 @@
 # Simple WebSocket Proxy
 
-[![Build Status](https://github.com/your-org/simple-websocket-proxy/workflows/CI/badge.svg)](https://github.com/your-org/simple-websocket-proxy/actions)
+[![Build Status](https://github.com/fransiscuss/simple-websocket-proxy/workflows/CI/badge.svg)](https://github.com/fransiscuss/simple-websocket-proxy/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.17.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue)](https://www.typescriptlang.org/)
@@ -107,7 +107,7 @@ Get up and running in under 5 minutes:
 
 ### 1. Clone and Install
 ```bash
-git clone https://github.com/your-org/simple-websocket-proxy.git
+git clone https://github.com/fransiscuss/simple-websocket-proxy.git
 cd simple-websocket-proxy
 pnpm install
 ```
@@ -140,7 +140,7 @@ pnpm dev
 #### Using Docker (Recommended)
 ```bash
 # Clone repository
-git clone https://github.com/your-org/simple-websocket-proxy.git
+git clone https://github.com/fransiscuss/simple-websocket-proxy.git
 cd simple-websocket-proxy
 
 # Install dependencies
@@ -1481,13 +1481,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Documentation**: [GitHub Wiki](https://github.com/your-org/simple-websocket-proxy/wiki)
-- **Issues**: [GitHub Issues](https://github.com/your-org/simple-websocket-proxy/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/simple-websocket-proxy/discussions)
+- **Documentation**: [GitHub Wiki](https://github.com/fransiscuss/simple-websocket-proxy/wiki)
+- **Issues**: [GitHub Issues](https://github.com/fransiscuss/simple-websocket-proxy/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/fransiscuss/simple-websocket-proxy/discussions)
 - **Security**: Report security issues to security@your-org.com
 
 ---
 
 **Built with ❤️ for the WebSocket community**
 
-*For more information, visit our [documentation site](https://your-org.github.io/simple-websocket-proxy/) or check out the [getting started guide](https://github.com/your-org/simple-websocket-proxy/wiki/Getting-Started).*
+*For more information, visit our [documentation site](https://your-org.github.io/simple-websocket-proxy/) or check out the [getting started guide](https://github.com/fransiscuss/simple-websocket-proxy/wiki/Getting-Started).*
