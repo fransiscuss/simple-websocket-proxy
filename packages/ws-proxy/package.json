@@ -25,7 +25,7 @@
     "pino": "^8.15.0",
     "pino-pretty": "^10.2.0",
     "ws": "^8.13.0",
-    "zod": "^3.22.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.2",
